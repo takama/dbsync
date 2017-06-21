@@ -1,9 +1,10 @@
-DBSync - synchronize database tables
-====================================
+# DBSync
+
+## A service for realtime synchronization of database tables
 
 Quite often you have to transfer data from one database table to another. Sometimes it needs to be done between different types of databases, for example MySQL and PostgreSQL. For this purpose, you can use this service.
 
-### Features
+## Features
 
 - Syncronization of the tables for MySQL/PostgresSQL databases
 - Checking for updates by `id` and specified counts of records
