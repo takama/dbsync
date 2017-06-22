@@ -14,8 +14,6 @@ Quite often you have to transfer data from one database table to another. Someti
 
 ## Contributors
 
-- [Igor Dolzhikov](https://github.com/takama)
-
 All the contributors are welcome. If you would like to be the contributor please accept some rules.
 - The pull requests will be accepted to "develop" branch only
 - All modifications or additions should be tested

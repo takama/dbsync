@@ -1,4 +1,4 @@
 vendor
 .coverprofile
 glide.lock
-dbsync
+bin
