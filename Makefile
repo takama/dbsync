@@ -123,7 +123,7 @@ cover:
 
 .PHONY: clean
 clean:
-	rm -f ${APP}
+	rm -f ./bin/${GOOS}/${APP}
 
 HAS_GLIDE := $(shell command -v glide;)
 HAS_LINT := $(shell command -v golint;)
