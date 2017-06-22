@@ -54,19 +54,23 @@ type DBBundle struct {
 	updateTables []string
 	insertTables []string
 	tablePrefix  string
+	tablePostfix string
+	startAfterID uint64
 }
 
 // New creates new server
 func New(srcDriver, srcHost, srcDBName, srcUser, srcPassword string, srcPort uint64,
 	dstDriver, dstHost, dstDBName, dstUser, dstPassword string, dstPort uint64,
-	updateTables, insertTables []string, tablePrefix string,
-	updatePeriod, insertPeriod, updateRows, insertRows uint64) (*DBBundle, error) {
+	updateTables, insertTables []string, tablePrefix, tablePostfix string,
+	updatePeriod, insertPeriod, updateRows, insertRows, startAfterID uint64) (*DBBundle, error) {
 	bundle := &DBBundle{
 		stdlog:       log.New(os.Stdout, "[DBSYNC:INFO]: ", log.LstdFlags),
 		errlog:       log.New(os.Stderr, "[DBSYNC:ERROR]: ", log.LstdFlags),
 		updateTables: updateTables,
 		insertTables: insertTables,
 		tablePrefix:  tablePrefix,
+		tablePostfix: tablePostfix,
+		startAfterID: startAfterID,
 	}
 	for _, table := range bundle.updateTables {
 		if !bundle.exists(table) {
@@ -164,16 +168,17 @@ func (dbb *DBBundle) updateHandler(updateRows uint64) {
 		}
 		dbb.report.mutex.Unlock()
 		var errors uint64
-		rows, err := dbb.dstDriver.GetLimited(dbb.tablePrefix+table, updateRows)
+		dstTableName := dbb.tablePrefix + table + dbb.tablePostfix
+		rows, err := dbb.dstDriver.GetLimited(dstTableName, updateRows)
 		if err != nil {
 			if err != sql.ErrNoRows {
-				dbb.errlog.Println("GetLimited - Table:", dbb.tablePrefix+table, err)
+				dbb.errlog.Println("GetLimited - Table:", dstTableName, err)
 				errors++
 			}
 		} else {
 			columns, err := rows.Columns()
 			if err != nil {
-				dbb.errlog.Println("Columns - Table:", dbb.tablePrefix+table, err)
+				dbb.errlog.Println("Columns - Table:", dstTableName, err)
 				errors++
 			}
 			data := make([]interface{}, len(columns))
@@ -184,7 +189,7 @@ func (dbb *DBBundle) updateHandler(updateRows uint64) {
 			for rows.Next() {
 				err := rows.Scan(ptrs...)
 				if err != nil {
-					dbb.errlog.Println("Scan - Table:", dbb.tablePrefix+table, err)
+					dbb.errlog.Println("Scan - Table:", dstTableName, err)
 					errors++
 				} else {
 					var id string
@@ -324,9 +329,9 @@ func (dbb *DBBundle) updateHandler(updateRows uint64) {
 							}
 						}
 						if update {
-							count, err := dbb.dstDriver.Update(dbb.tablePrefix+table, columns, srcData)
+							count, err := dbb.dstDriver.Update(dstTableName, columns, srcData)
 							if err != nil {
-								dbb.errlog.Println("Update - Table:", dbb.tablePrefix+table, err)
+								dbb.errlog.Println("Update - Table:", dstTableName, err)
 								errors++
 							} else {
 								dbb.report.mutex.Lock()
@@ -368,15 +373,19 @@ func (dbb *DBBundle) insertHandler(insertRows uint64) {
 		dbb.report.mutex.Unlock()
 
 		var errors uint64
+		dstTableName := dbb.tablePrefix + table + dbb.tablePostfix
 		srcID, err := dbb.srcDriver.LastID(table)
 		if err != nil {
 			dbb.errlog.Println("LastID - Table:", table, err)
 			errors++
 		}
-		dstID, err := dbb.dstDriver.LastID(dbb.tablePrefix + table)
+		dstID, err := dbb.dstDriver.LastID(dstTableName)
 		if err != nil {
-			dbb.errlog.Println("LastID - Table:", dbb.tablePrefix+table, err)
+			dbb.errlog.Println("LastID - Table:", dstTableName, err)
 			errors++
+		}
+		if dstID < dbb.startAfterID {
+			dstID = dbb.startAfterID
 		}
 		dbb.report.mutex.Lock()
 		for key, status := range dbb.status {
@@ -408,9 +417,9 @@ func (dbb *DBBundle) insertHandler(insertRows uint64) {
 							dbb.errlog.Println(err)
 							errors++
 						} else {
-							last, err := dbb.dstDriver.Insert(dbb.tablePrefix+table, columns, data)
+							last, err := dbb.dstDriver.Insert(dstTableName, columns, data)
 							if err != nil {
-								dbb.errlog.Println("Insert - Table:", dbb.tablePrefix+table, err)
+								dbb.errlog.Println("Insert - Table:", dstTableName, err)
 								errors++
 							} else {
 								dbb.report.mutex.Lock()

@@ -3,7 +3,7 @@ BUILDTAGS=
 # Use the 0.0.0 tag for testing, it shouldn't clobber any release builds
 APP?=dbsync
 USERSPACE?=takama
-RELEASE?=0.1.0
+RELEASE?=0.1.1
 PROJECT?=github.com/${USERSPACE}/${APP}
 HELM_REPO?=https://${USERSPACE}.github.io/${APP}
 GOOS?=linux
@@ -13,6 +13,7 @@ DBSYNC_UPDATE_PERIOD?=5
 DBSYNC_INSERT_PERIOD?=1
 DBSYNC_UPDATE_ROWS?=5000
 DBSYNC_INSERT_ROWS?=1000
+DBSYNC_START_AFTER_ID?=0
 DBSYNC_UPDATE_TABLES?=''
 DBSYNC_INSERT_TABLES?=''
 DBSYNC_SRC_DB_DRIVER?='mysql'
@@ -73,6 +74,7 @@ run: container
 		-e "DBSYNC_INSERT_PERIOD=${DBSYNC_INSERT_PERIOD}" \
 		-e "DBSYNC_UPDATE_ROWS=${DBSYNC_UPDATE_ROWS}" \
 		-e "DBSYNC_INSERT_ROWS=${DBSYNC_INSERT_ROWS}" \
+		-e "DBSYNC_START_AFTER_ID=${DBSYNC_START_AFTER_ID}" \
 		-e "DBSYNC_UPDATE_TABLES=${DBSYNC_UPDATE_TABLES}" \
 		-e "DBSYNC_INSERT_TABLES=${DBSYNC_INSERT_TABLES}" \
 		-e "DBSYNC_SRC_DB_DRIVER=${DBSYNC_SRC_DB_DRIVER}" \
@@ -123,7 +125,7 @@ cover:
 
 .PHONY: clean
 clean:
-	rm -f ${APP}
+	rm -f ./bin/${GOOS}/${APP}
 
 HAS_GLIDE := $(shell command -v glide;)
 HAS_LINT := $(shell command -v golint;)

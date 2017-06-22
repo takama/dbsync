@@ -81,7 +81,8 @@ func writeError(w http.ResponseWriter, code int) {
 // Setup server with env and handler
 func Setup() (srv http.Server, err error) {
 	keys := []string{
-		"DBSYNC_SERVICE_PORT", "DBSYNC_DST_DB_TABLES_PREFIX",
+		"DBSYNC_SERVICE_PORT", "DBSYNC_START_AFTER_ID",
+		"DBSYNC_DST_DB_TABLES_PREFIX, DBSYNC_DST_DB_TABLES_POSTFIX",
 		"DBSYNC_UPDATE_TABLES", "DBSYNC_INSERT_TABLES",
 		"DBSYNC_UPDATE_PERIOD", "DBSYNC_INSERT_PERIOD",
 		"DBSYNC_UPDATE_ROWS", "DBSYNC_INSERT_ROWS",
@@ -131,6 +132,10 @@ func Setup() (srv http.Server, err error) {
 	if err != nil {
 		return
 	}
+	startAfterID, err := strconv.ParseUint(h.env["DBSYNC_START_AFTER_ID"], 10, 64)
+	if err != nil {
+		return
+	}
 	h.DB, err = datastore.New(
 		h.env["DBSYNC_SRC_DB_DRIVER"], h.env["DBSYNC_SRC_DB_HOST"], h.env["DBSYNC_SRC_DB_NAME"],
 		h.env["DBSYNC_SRC_DB_USERNAME"], h.env["DBSYNC_SRC_DB_PASSWORD"], srcPort,
@@ -138,8 +143,8 @@ func Setup() (srv http.Server, err error) {
 		h.env["DBSYNC_DST_DB_USERNAME"], h.env["DBSYNC_DST_DB_PASSWORD"], dstPort,
 		strings.FieldsFunc(h.env["DBSYNC_UPDATE_TABLES"], splitf),
 		strings.FieldsFunc(h.env["DBSYNC_INSERT_TABLES"], splitf),
-		h.env["DBSYNC_DST_DB_TABLES_PREFIX"],
-		updatePeriod, insertPeriod, updateRows, insertRows,
+		h.env["DBSYNC_DST_DB_TABLES_PREFIX"], h.env["DBSYNC_DST_DB_TABLES_POSTFIX"],
+		updatePeriod, insertPeriod, updateRows, insertRows, startAfterID,
 	)
 	srv.Addr = ":" + h.env["DBSYNC_SERVICE_PORT"]
 	srv.Handler = h
