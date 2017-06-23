@@ -91,13 +91,14 @@ run: container
 		-e "DBSYNC_DST_DB_USERNAME=${DBSYNC_DST_DB_USERNAME}" \
 		-e "DBSYNC_DST_DB_PASSWORD=${DBSYNC_DST_DB_PASSWORD}" \
 		-e "DBSYNC_DST_DB_TABLES_PREFIX=${DBSYNC_DST_DB_TABLES_PREFIX}" \
+		-e "DBSYNC_DST_DB_TABLES_POSTFIX=${DBSYNC_DST_DB_TABLES_POSTFIX}" \
 		-d $(PREFIX):$(RELEASE)
 
 .PHONY: deploy
 deploy: push
 	helm repo add ${USERSPACE} ${HELM_REPO}
 	helm repo up
-    helm upgrade ${CONTAINER_NAME} ${USERSPACE}/${APP} --namespace ${NAMESPACE} --set image.tag=${RELEASE} -i --wait
+	helm upgrade ${CONTAINER_NAME} ${USERSPACE}/${APP} --namespace ${NAMESPACE} --set image.tag=${RELEASE} -i --wait
 
 .PHONY: fmt
 fmt:
