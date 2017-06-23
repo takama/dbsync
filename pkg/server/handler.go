@@ -99,7 +99,8 @@ func Setup() (srv http.Server, err error) {
 	for _, key := range keys {
 		value := os.Getenv(key)
 		if value == "" && key != "DBSYNC_UPDATE_TABLES" &&
-			key != "DBSYNC_INSERT_TABLES" && key != "DBSYNC_DST_DB_TABLES_PREFIX" {
+			key != "DBSYNC_INSERT_TABLES" && key != "DBSYNC_DST_DB_TABLES_PREFIX" &&
+			key != "DBSYNC_DST_DB_TABLES_POSTFIX" {
 			err = fmt.Errorf("%s environment variable was not set", key)
 			return
 		}

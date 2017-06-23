@@ -3,7 +3,7 @@ BUILDTAGS=
 # Use the 0.0.0 tag for testing, it shouldn't clobber any release builds
 APP?=dbsync
 USERSPACE?=takama
-RELEASE?=0.1.1
+RELEASE?=0.1.2
 PROJECT?=github.com/${USERSPACE}/${APP}
 HELM_REPO?=https://${USERSPACE}.github.io/${APP}
 GOOS?=linux
@@ -29,6 +29,7 @@ DBSYNC_DST_DB_NAME?='database'
 DBSYNC_DST_DB_USERNAME?='username'
 DBSYNC_DST_DB_PASSWORD?='password'
 DBSYNC_DST_DB_TABLES_PREFIX?=''
+DBSYNC_DST_DB_TABLES_POSTFIX?=''
 
 NAMESPACE?=${USERSPACE}
 PREFIX?=${REGISTRY}/${NAMESPACE}/${APP}
@@ -90,13 +91,14 @@ run: container
 		-e "DBSYNC_DST_DB_USERNAME=${DBSYNC_DST_DB_USERNAME}" \
 		-e "DBSYNC_DST_DB_PASSWORD=${DBSYNC_DST_DB_PASSWORD}" \
 		-e "DBSYNC_DST_DB_TABLES_PREFIX=${DBSYNC_DST_DB_TABLES_PREFIX}" \
+		-e "DBSYNC_DST_DB_TABLES_POSTFIX=${DBSYNC_DST_DB_TABLES_POSTFIX}" \
 		-d $(PREFIX):$(RELEASE)
 
 .PHONY: deploy
 deploy: push
 	helm repo add ${USERSPACE} ${HELM_REPO}
 	helm repo up
-    helm upgrade ${CONTAINER_NAME} ${USERSPACE}/${APP} --namespace ${NAMESPACE} --set image.tag=${RELEASE} -i --wait
+	helm upgrade ${CONTAINER_NAME} ${USERSPACE}/${APP} --namespace ${NAMESPACE} --set image.tag=${RELEASE} -i --wait
 
 .PHONY: fmt
 fmt:
