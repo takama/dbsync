@@ -3,7 +3,7 @@ BUILDTAGS=
 # Use the 0.0.0 tag for testing, it shouldn't clobber any release builds
 APP?=dbsync
 USERSPACE?=takama
-RELEASE?=0.1.2
+RELEASE?=0.1.3
 PROJECT?=github.com/${USERSPACE}/${APP}
 HELM_REPO?=https://${USERSPACE}.github.io/${APP}
 GOOS?=linux
@@ -81,7 +81,7 @@ run: container
 		-e "DBSYNC_SRC_DB_DRIVER=${DBSYNC_SRC_DB_DRIVER}" \
 		-e "DBSYNC_SRC_DB_HOST=${DBSYNC_SRC_DB_HOST}" \
 		-e "DBSYNC_SRC_DB_PORT=${DBSYNC_SRC_DB_PORT}" \
-		-e "DBSYNC_SRC_DB_NAME=$"DBSYNC_SRC_DB_NAME}" \
+		-e "DBSYNC_SRC_DB_NAME=${DBSYNC_SRC_DB_NAME}" \
 		-e "DBSYNC_SRC_DB_USERNAME=${DBSYNC_SRC_DB_USERNAME}" \
 		-e "DBSYNC_SRC_DB_PASSWORD=${DBSYNC_SRC_DB_PASSWORD}" \
 		-e "DBSYNC_DST_DB_DRIVER=${DBSYNC_DST_DB_DRIVER}" \
