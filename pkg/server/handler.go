@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 	"unicode"
 
 	"github.com/takama/dbsync/pkg/datastore"
@@ -20,7 +21,7 @@ type handler struct {
 	errlog *log.Logger
 	env    map[string]string
 
-	datastore.DB
+	datastore.DBHandler
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -45,11 +46,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) status(w http.ResponseWriter) {
-	statuses := h.DB.Report()
+	statuses := h.DBHandler.Report()
 	fmt.Fprint(w, "Tables sync status\n==================\n")
-	templ, err := template.New("statusList").Parse(statusList)
+	tmpl, err := template.New("statusList").Parse(statusList)
 	if err == nil {
-		templ.Execute(w, statuses)
+		tmpl.Execute(w, statuses)
 		return
 	}
 }
@@ -78,8 +79,8 @@ func writeError(w http.ResponseWriter, code int) {
 	http.Error(w, http.StatusText(code), code)
 }
 
-// Setup server with env and handler
-func Setup() (srv http.Server, err error) {
+// Run server with env and handler
+func Run() (srv http.Server, err error) {
 	keys := []string{
 		"DBSYNC_SERVICE_PORT", "DBSYNC_START_AFTER_ID",
 		"DBSYNC_DST_DB_TABLES_PREFIX", "DBSYNC_DST_DB_TABLES_POSTFIX",
@@ -137,7 +138,7 @@ func Setup() (srv http.Server, err error) {
 	if err != nil {
 		return
 	}
-	h.DB, err = datastore.New(
+	h.DBHandler, err = datastore.New(
 		h.env["DBSYNC_SRC_DB_DRIVER"], h.env["DBSYNC_SRC_DB_HOST"], h.env["DBSYNC_SRC_DB_NAME"],
 		h.env["DBSYNC_SRC_DB_USERNAME"], h.env["DBSYNC_SRC_DB_PASSWORD"], srcPort,
 		h.env["DBSYNC_DST_DB_DRIVER"], h.env["DBSYNC_DST_DB_HOST"], h.env["DBSYNC_DST_DB_NAME"],
@@ -145,10 +146,15 @@ func Setup() (srv http.Server, err error) {
 		strings.FieldsFunc(h.env["DBSYNC_UPDATE_TABLES"], splitf),
 		strings.FieldsFunc(h.env["DBSYNC_INSERT_TABLES"], splitf),
 		h.env["DBSYNC_DST_DB_TABLES_PREFIX"], h.env["DBSYNC_DST_DB_TABLES_POSTFIX"],
-		updatePeriod, insertPeriod, updateRows, insertRows, startAfterID,
+		startAfterID,
 	)
 	srv.Addr = ":" + h.env["DBSYNC_SERVICE_PORT"]
 	srv.Handler = h
+	h.DBHandler.Run(time.Duration(
+		updatePeriod)*time.Second, time.Duration(insertPeriod)*time.Second,
+		updateRows, insertRows,
+	)
+
 	return
 }
 

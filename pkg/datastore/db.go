@@ -13,8 +13,9 @@ import (
 	"github.com/takama/dbsync/pkg/datastore/postgres"
 )
 
-// DB provide a simple interface
-type DB interface {
+// DBHandler provide a simple handler interface for DB
+type DBHandler interface {
+	Run(updatePeriod, insertPeriod time.Duration, updateRows, insertRows uint64)
 	Report() []Status
 }
 
@@ -62,7 +63,7 @@ type DBBundle struct {
 func New(srcDriver, srcHost, srcDBName, srcUser, srcPassword string, srcPort uint64,
 	dstDriver, dstHost, dstDBName, dstUser, dstPassword string, dstPort uint64,
 	updateTables, insertTables []string, tablePrefix, tablePostfix string,
-	updatePeriod, insertPeriod, updateRows, insertRows, startAfterID uint64) (*DBBundle, error) {
+	startAfterID uint64) (*DBBundle, error) {
 	bundle := &DBBundle{
 		stdlog:       log.New(os.Stdout, "[DBSYNC:INFO]: ", log.LstdFlags),
 		errlog:       log.New(os.Stderr, "[DBSYNC:ERROR]: ", log.LstdFlags),
@@ -112,24 +113,29 @@ func New(srcDriver, srcHost, srcDBName, srcUser, srcPassword string, srcPort uin
 			return bundle, err
 		}
 	}
+
+	return bundle, err
+}
+
+// Run implements interface that starts synchronization of the tables
+func (dbb *DBBundle) Run(updatePeriod, insertPeriod time.Duration, updateRows, insertRows uint64) {
 	go func() {
-		bundle.updateHandler(updateRows)
-		bundle.insertHandler(insertRows)
+		dbb.updateHandler(updateRows)
+		dbb.insertHandler(insertRows)
 		// setup handlers
-		updateTicker := time.NewTicker(time.Duration(updatePeriod) * time.Minute)
+		updateTicker := time.NewTicker(updatePeriod)
 		go func() {
 			for range updateTicker.C {
-				bundle.updateHandler(updateRows)
+				dbb.updateHandler(updateRows)
 			}
 		}()
-		insertTicker := time.NewTicker(time.Duration(insertPeriod) * time.Minute)
+		insertTicker := time.NewTicker(insertPeriod)
 		go func() {
 			for range insertTicker.C {
-				bundle.insertHandler(insertRows)
+				dbb.insertHandler(insertRows)
 			}
 		}()
 	}()
-	return bundle, err
 }
 
 // Report implements interface that shows status detailed information
