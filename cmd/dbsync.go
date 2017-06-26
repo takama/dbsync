@@ -7,7 +7,7 @@ import (
 )
 
 func main() {
-	srv, err := server.Setup()
+	srv, err := server.Run()
 	if err != nil {
 		log.Fatal("[SETUP:ERROR] ", err)
 	}
