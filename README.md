@@ -6,10 +6,10 @@ Quite often you have to transfer data from one database table to another. Someti
 
 ## Features
 
-- Syncronization of the tables for MySQL/PostgresSQL databases
-- Checking for updates by `id` and specified counts of records
-- Realtime checking for new records in source table
-- Ability of using prefix for destination table
+- Syncronization of specified tables between MySQL/PostgresSQL databases
+- Checking of updates by `id`, by specified counts of records
+- Realtime checking of new records in source table
+- Ability to using prefix for destination table
 - Showing HTTP detailed status for updates
 
 ## Contributors
