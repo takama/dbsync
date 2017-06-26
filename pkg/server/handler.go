@@ -151,8 +151,9 @@ func Run() (srv http.Server, err error) {
 	srv.Addr = ":" + h.env["DBSYNC_SERVICE_PORT"]
 	srv.Handler = h
 	h.DBHandler.Run(time.Duration(
-		updatePeriod)*time.Minute, time.Duration(insertPeriod)*time.Minute,
-		updateRows, insertRows)
+		updatePeriod)*time.Second, time.Duration(insertPeriod)*time.Second,
+		updateRows, insertRows,
+	)
 
 	return
 }
