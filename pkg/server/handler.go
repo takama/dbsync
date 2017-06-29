@@ -13,7 +13,7 @@ import (
 	"unicode"
 
 	"github.com/takama/dbsync/pkg/datastore"
-	"github.com/takama/dbsync/version"
+	"github.com/takama/dbsync/pkg/version"
 )
 
 type handler struct {

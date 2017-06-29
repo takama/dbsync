@@ -56,7 +56,7 @@ vendor: clean bootstrap
 .PHONY: build
 build: vendor
 	CGO_ENABLED=0 GOOS=${GOOS} go build -a -installsuffix cgo \
-		-ldflags "-s -w -X ${PROJECT}/version.RELEASE=${RELEASE} -X ${PROJECT}/version.COMMIT=${COMMIT} -X ${PROJECT}/version.REPO=${REPO_INFO}" \
+		-ldflags "-s -w -X ${PROJECT}/pkg/version.RELEASE=${RELEASE} -X ${PROJECT}/pkg/version.COMMIT=${COMMIT} -X ${PROJECT}/pkg/version.REPO=${REPO_INFO}" \
 		-o ./bin/${GOOS}/${APP} ${PROJECT}/cmd
 
 .PHONY: container
