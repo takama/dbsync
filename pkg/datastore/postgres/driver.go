@@ -32,8 +32,8 @@ func (db *Postgres) LastID(table string) (id uint64, err error) {
 }
 
 // GetByID implements interface for getting table row by ID
-func (db *Postgres) GetByID(table string, ID interface{}) *sql.Row {
-	return db.driver.QueryRow("SELECT * FROM "+table+" WHERE id = $1", ID)
+func (db *Postgres) GetByID(table string, ID interface{}) (*sql.Row, error) {
+	return db.driver.QueryRow("SELECT * FROM "+table+" WHERE id = $1", ID), nil
 }
 
 // GetLimited implements interface for getting last limited table rows by ID

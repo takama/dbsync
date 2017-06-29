@@ -9,8 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/takama/dbsync/pkg/datastore/b2"
 	"github.com/takama/dbsync/pkg/datastore/mysql"
 	"github.com/takama/dbsync/pkg/datastore/postgres"
+	"github.com/takama/dbsync/pkg/datastore/s3"
 )
 
 // DBHandler provide a simple handler interface for DB
@@ -33,7 +35,7 @@ type Status struct {
 
 type replication interface {
 	LastID(table string) (uint64, error)
-	GetByID(table string, ID interface{}) *sql.Row
+	GetByID(table string, ID interface{}) (*sql.Row, error)
 	GetLimited(table string, limit uint64) (*sql.Rows, error)
 	GetLimitedAfterID(table string, after, limit uint64) (*sql.Rows, error)
 	Update(table string, columns []string, values []interface{}) (count uint64, err error)
@@ -86,6 +88,16 @@ func New(srcDriver, srcHost, srcDBName, srcUser, srcPassword string, srcPort uin
 
 	var err error
 	switch strings.ToLower(srcDriver) {
+	case "b2":
+		bundle.srcDriver, err = b2.New(srcHost, srcDBName, srcUser, srcPassword, srcPort)
+		if err != nil {
+			return bundle, err
+		}
+	case "s3":
+		bundle.srcDriver, err = s3.New(srcHost, srcDBName, srcUser, srcPassword, srcPort)
+		if err != nil {
+			return bundle, err
+		}
 	case "pgsql":
 		bundle.srcDriver, err = postgres.New(srcHost, srcDBName, srcUser, srcPassword, srcPort)
 		if err != nil {
@@ -100,6 +112,16 @@ func New(srcDriver, srcHost, srcDBName, srcUser, srcPassword string, srcPort uin
 		}
 	}
 	switch strings.ToLower(dstDriver) {
+	case "b2":
+		bundle.dstDriver, err = b2.New(dstHost, dstDBName, dstUser, dstPassword, dstPort)
+		if err != nil {
+			return bundle, err
+		}
+	case "s3":
+		bundle.dstDriver, err = s3.New(dstHost, dstDBName, dstUser, dstPassword, dstPort)
+		if err != nil {
+			return bundle, err
+		}
 	case "pgsql":
 		bundle.dstDriver, err = postgres.New(dstHost, dstDBName, dstUser, dstPassword, dstPort)
 		if err != nil {
@@ -207,19 +229,23 @@ func (dbb *DBBundle) updateHandler(updateRows uint64) {
 					case int64:
 						id = strconv.FormatInt(v, 10)
 					}
-					row := dbb.srcDriver.GetByID(table, data[0])
+					row, err := dbb.srcDriver.GetByID(table, data[0])
+					if err != nil {
+						dbb.errlog.Println("[Table:", table, "ID:"+id+"]", err)
+						errors++
+					}
 					srcData := make([]interface{}, len(columns))
 					srcPtrs := make([]interface{}, len(columns))
 					for index := range columns {
 						srcPtrs[index] = &srcData[index]
 					}
-					err := row.Scan(srcPtrs...)
+					err = row.Scan(srcPtrs...)
 					if err != nil {
 						if err != sql.ErrNoRows {
-							dbb.errlog.Println("[Table:", table, "ID:"+id, err)
+							dbb.errlog.Println("[Table:", table, "ID:"+id+"]", err)
 						} else {
-							dbb.errlog.Println("[Table:", table, "ID:"+id,
-								"] Original record does not exist.")
+							dbb.errlog.Println("[Table:", table, "ID:"+id+"]",
+								"Original record does not exist.")
 						}
 						errors++
 					} else {
@@ -431,7 +457,7 @@ func (dbb *DBBundle) insertHandler(insertRows uint64) {
 								dbb.report.mutex.Lock()
 								for key, status := range dbb.status {
 									if status.Table == table {
-										dbb.status[key].Inserted += 1
+										dbb.status[key].Inserted++
 										dbb.status[key].LastID = last
 										dstID = last
 									}
