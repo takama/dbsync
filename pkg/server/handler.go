@@ -6,11 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
-	"strings"
 	"text/template"
-	"time"
-	"unicode"
 
 	"github.com/takama/dbsync/pkg/datastore"
 	"github.com/takama/dbsync/pkg/version"
@@ -19,7 +15,6 @@ import (
 type handler struct {
 	stdlog *log.Logger
 	errlog *log.Logger
-	env    map[string]string
 
 	datastore.DBHandler
 }
@@ -81,79 +76,17 @@ func writeError(w http.ResponseWriter, code int) {
 
 // Run server with env and handler
 func Run() (srv http.Server, err error) {
-	keys := []string{
-		"DBSYNC_SERVICE_PORT", "DBSYNC_START_AFTER_ID",
-		"DBSYNC_DST_DB_TABLES_PREFIX", "DBSYNC_DST_DB_TABLES_POSTFIX",
-		"DBSYNC_UPDATE_TABLES", "DBSYNC_INSERT_TABLES",
-		"DBSYNC_UPDATE_PERIOD", "DBSYNC_INSERT_PERIOD",
-		"DBSYNC_UPDATE_ROWS", "DBSYNC_INSERT_ROWS",
-		"DBSYNC_SRC_DB_DRIVER", "DBSYNC_SRC_DB_HOST", "DBSYNC_SRC_DB_PORT",
-		"DBSYNC_SRC_DB_NAME", "DBSYNC_SRC_DB_USERNAME", "DBSYNC_SRC_DB_PASSWORD",
-		"DBSYNC_DST_DB_DRIVER", "DBSYNC_DST_DB_HOST", "DBSYNC_DST_DB_PORT",
-		"DBSYNC_DST_DB_NAME", "DBSYNC_DST_DB_USERNAME", "DBSYNC_DST_DB_PASSWORD",
-	}
 	h := &handler{
 		stdlog: log.New(os.Stdout, "[DBSYNC:INFO]: ", log.LstdFlags),
 		errlog: log.New(os.Stderr, "[DBSYNC:ERROR]: ", log.Ldate|log.Ltime|log.Lshortfile),
-		env:    make(map[string]string, len(keys)),
 	}
-	for _, key := range keys {
-		value := os.Getenv(key)
-		if value == "" && key != "DBSYNC_UPDATE_TABLES" &&
-			key != "DBSYNC_INSERT_TABLES" && key != "DBSYNC_DST_DB_TABLES_PREFIX" &&
-			key != "DBSYNC_DST_DB_TABLES_POSTFIX" {
-			err = fmt.Errorf("%s environment variable was not set", key)
-			return
-		}
-		h.env[key] = value
-	}
-	splitf := func(c rune) bool {
-		return !unicode.IsLetter(c) && !unicode.IsNumber(c) && c != '_' && c != '-'
-	}
-	srcPort, err := strconv.ParseUint(h.env["DBSYNC_SRC_DB_PORT"], 10, 64)
+	h.DBHandler, err = datastore.New()
 	if err != nil {
 		return
 	}
-	dstPort, err := strconv.ParseUint(h.env["DBSYNC_DST_DB_PORT"], 10, 64)
-	if err != nil {
-		return
-	}
-	updatePeriod, err := strconv.ParseUint(h.env["DBSYNC_UPDATE_PERIOD"], 10, 64)
-	if err != nil {
-		return
-	}
-	insertPeriod, err := strconv.ParseUint(h.env["DBSYNC_INSERT_PERIOD"], 10, 64)
-	if err != nil {
-		return
-	}
-	updateRows, err := strconv.ParseUint(h.env["DBSYNC_UPDATE_ROWS"], 10, 64)
-	if err != nil {
-		return
-	}
-	insertRows, err := strconv.ParseUint(h.env["DBSYNC_INSERT_ROWS"], 10, 64)
-	if err != nil {
-		return
-	}
-	startAfterID, err := strconv.ParseUint(h.env["DBSYNC_START_AFTER_ID"], 10, 64)
-	if err != nil {
-		return
-	}
-	h.DBHandler, err = datastore.New(
-		h.env["DBSYNC_SRC_DB_DRIVER"], h.env["DBSYNC_SRC_DB_HOST"], h.env["DBSYNC_SRC_DB_NAME"],
-		h.env["DBSYNC_SRC_DB_USERNAME"], h.env["DBSYNC_SRC_DB_PASSWORD"], srcPort,
-		h.env["DBSYNC_DST_DB_DRIVER"], h.env["DBSYNC_DST_DB_HOST"], h.env["DBSYNC_DST_DB_NAME"],
-		h.env["DBSYNC_DST_DB_USERNAME"], h.env["DBSYNC_DST_DB_PASSWORD"], dstPort,
-		strings.FieldsFunc(h.env["DBSYNC_UPDATE_TABLES"], splitf),
-		strings.FieldsFunc(h.env["DBSYNC_INSERT_TABLES"], splitf),
-		h.env["DBSYNC_DST_DB_TABLES_PREFIX"], h.env["DBSYNC_DST_DB_TABLES_POSTFIX"],
-		startAfterID,
-	)
-	srv.Addr = ":" + h.env["DBSYNC_SERVICE_PORT"]
+	srv.Addr = ":" + os.Getenv("DBSYNC_SERVICE_PORT")
 	srv.Handler = h
-	h.DBHandler.Run(time.Duration(
-		updatePeriod)*time.Second, time.Duration(insertPeriod)*time.Second,
-		updateRows, insertRows,
-	)
+	h.DBHandler.Run()
 
 	return
 }

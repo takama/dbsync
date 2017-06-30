@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kelseyhightower/envconfig"
 	"github.com/takama/dbsync/pkg/datastore/b2"
 	"github.com/takama/dbsync/pkg/datastore/mysql"
 	"github.com/takama/dbsync/pkg/datastore/postgres"
@@ -17,7 +18,7 @@ import (
 
 // DBHandler provide a simple handler interface for DB
 type DBHandler interface {
-	Run(updatePeriod, insertPeriod time.Duration, updateRows, insertRows uint64)
+	Run()
 	Report() []Status
 }
 
@@ -54,83 +55,125 @@ type DBBundle struct {
 		mutex sync.RWMutex
 	}
 
-	updateTables []string
-	insertTables []string
-	tablePrefix  string
-	tablePostfix string
-	startAfterID uint64
+	// ENV vars
+	SrcDbDriver   string `split_words:"true" required:"true"`
+	SrcDbHost     string `split_words:"true" required:"true"`
+	SrcDbPort     uint64 `split_words:"true" required:"true"`
+	SrcDbName     string `split_words:"true" required:"true"`
+	SrcDbUsername string `split_words:"true" required:"true"`
+	SrcDbPassword string `split_words:"true" required:"true"`
+
+	DstDbDriver   string `split_words:"true" required:"true"`
+	DstDbHost     string `split_words:"true" required:"true"`
+	DstDbPort     uint64 `split_words:"true" required:"true"`
+	DstDbName     string `split_words:"true" required:"true"`
+	DstDbUsername string `split_words:"true" required:"true"`
+	DstDbPassword string `split_words:"true" required:"true"`
+
+	UpdateTables []string `split_words:"true"`
+	InsertTables []string `split_words:"true"`
+	TablePrefix  string   `envconfig:"DBSYNC_DST_DB_TABLES_PREFIX"`
+	TablePostfix string   `envconfig:"DBSYNC_DST_DB_TABLES_POSTFIX"`
+	StartAfterID uint64   `split_words:"true"`
+
+	UpdatePeriod uint64 `split_words:"true" required:"true"`
+	InsertPeriod uint64 `split_words:"true" required:"true"`
+	UpdateRows   uint64 `split_words:"true" required:"true"`
+	InsertRows   uint64 `split_words:"true" required:"true"`
 }
 
 // New creates new server
-func New(srcDriver, srcHost, srcDBName, srcUser, srcPassword string, srcPort uint64,
-	dstDriver, dstHost, dstDBName, dstUser, dstPassword string, dstPort uint64,
-	updateTables, insertTables []string, tablePrefix, tablePostfix string,
-	startAfterID uint64) (*DBBundle, error) {
+func New() (*DBBundle, error) {
+
 	bundle := &DBBundle{
-		stdlog:       log.New(os.Stdout, "[DBSYNC:INFO]: ", log.LstdFlags),
-		errlog:       log.New(os.Stderr, "[DBSYNC:ERROR]: ", log.LstdFlags),
-		updateTables: updateTables,
-		insertTables: insertTables,
-		tablePrefix:  tablePrefix,
-		tablePostfix: tablePostfix,
-		startAfterID: startAfterID,
+		stdlog: log.New(os.Stdout, "[DBSYNC:INFO]: ", log.LstdFlags),
+		errlog: log.New(os.Stderr, "[DBSYNC:ERROR]: ", log.LstdFlags),
 	}
-	for _, table := range bundle.updateTables {
+	err := envconfig.Process("dbsync", bundle)
+	if err != nil {
+		return nil, err
+	}
+
+	bundle.stdlog.Println(bundle)
+	for _, table := range bundle.UpdateTables {
 		if !bundle.exists(table) {
 			bundle.status = append(bundle.status, Status{Table: table})
 		}
 	}
-	for _, table := range bundle.insertTables {
+	for _, table := range bundle.InsertTables {
 		if !bundle.exists(table) {
 			bundle.status = append(bundle.status, Status{Table: table})
 		}
 	}
 
-	var err error
-	switch strings.ToLower(srcDriver) {
+	switch strings.ToLower(bundle.SrcDbDriver) {
 	case "b2":
-		bundle.srcDriver, err = b2.New(srcHost, srcDBName, srcUser, srcPassword, srcPort)
+		bundle.srcDriver, err = b2.New(
+			bundle.SrcDbHost, bundle.SrcDbPort, bundle.SrcDbName,
+			bundle.SrcDbUsername, bundle.SrcDbPassword,
+		)
 		if err != nil {
 			return bundle, err
 		}
 	case "s3":
-		bundle.srcDriver, err = s3.New(srcHost, srcDBName, srcUser, srcPassword, srcPort)
+		bundle.srcDriver, err = s3.New(
+			bundle.SrcDbHost, bundle.SrcDbPort, bundle.SrcDbName,
+			bundle.SrcDbUsername, bundle.SrcDbPassword,
+		)
 		if err != nil {
 			return bundle, err
 		}
 	case "pgsql":
-		bundle.srcDriver, err = postgres.New(srcHost, srcDBName, srcUser, srcPassword, srcPort)
+		bundle.srcDriver, err = postgres.New(
+			bundle.SrcDbHost, bundle.SrcDbPort, bundle.SrcDbName,
+			bundle.SrcDbUsername, bundle.SrcDbPassword,
+		)
 		if err != nil {
 			return bundle, err
 		}
 	case "mysql":
 		fallthrough
 	default:
-		bundle.srcDriver, err = mysql.New(srcHost, srcDBName, srcUser, srcPassword, srcPort)
+		bundle.srcDriver, err = mysql.New(
+			bundle.SrcDbHost, bundle.SrcDbPort, bundle.SrcDbName,
+			bundle.SrcDbUsername, bundle.SrcDbPassword,
+		)
 		if err != nil {
 			return bundle, err
 		}
 	}
-	switch strings.ToLower(dstDriver) {
+	switch strings.ToLower(bundle.DstDbDriver) {
 	case "b2":
-		bundle.dstDriver, err = b2.New(dstHost, dstDBName, dstUser, dstPassword, dstPort)
+		bundle.dstDriver, err = b2.New(
+			bundle.DstDbHost, bundle.DstDbPort, bundle.DstDbName,
+			bundle.DstDbUsername, bundle.DstDbPassword,
+		)
 		if err != nil {
 			return bundle, err
 		}
 	case "s3":
-		bundle.dstDriver, err = s3.New(dstHost, dstDBName, dstUser, dstPassword, dstPort)
+		bundle.dstDriver, err = s3.New(
+			bundle.DstDbHost, bundle.DstDbPort, bundle.DstDbName,
+			bundle.DstDbUsername, bundle.DstDbPassword,
+		)
 		if err != nil {
 			return bundle, err
 		}
 	case "pgsql":
-		bundle.dstDriver, err = postgres.New(dstHost, dstDBName, dstUser, dstPassword, dstPort)
+		bundle.dstDriver, err = postgres.New(
+			bundle.DstDbHost, bundle.DstDbPort, bundle.DstDbName,
+			bundle.DstDbUsername, bundle.DstDbPassword,
+		)
 		if err != nil {
 			return bundle, err
 		}
 	case "mysql":
 		fallthrough
 	default:
-		bundle.dstDriver, err = mysql.New(dstHost, dstDBName, dstUser, dstPassword, dstPort)
+		bundle.dstDriver, err = mysql.New(
+			bundle.DstDbHost, bundle.DstDbPort, bundle.DstDbName,
+			bundle.DstDbUsername, bundle.DstDbPassword,
+		)
 		if err != nil {
 			return bundle, err
 		}
@@ -140,21 +183,21 @@ func New(srcDriver, srcHost, srcDBName, srcUser, srcPassword string, srcPort uin
 }
 
 // Run implements interface that starts synchronization of the tables
-func (dbb *DBBundle) Run(updatePeriod, insertPeriod time.Duration, updateRows, insertRows uint64) {
+func (dbb *DBBundle) Run() {
 	go func() {
-		dbb.updateHandler(updateRows)
-		dbb.insertHandler(insertRows)
+		dbb.updateHandler(dbb.UpdateRows)
+		dbb.insertHandler(dbb.InsertRows)
 		// setup handlers
-		updateTicker := time.NewTicker(updatePeriod)
+		updateTicker := time.NewTicker(time.Duration(dbb.UpdatePeriod) * time.Second)
 		go func() {
 			for range updateTicker.C {
-				dbb.updateHandler(updateRows)
+				dbb.updateHandler(dbb.UpdateRows)
 			}
 		}()
-		insertTicker := time.NewTicker(insertPeriod)
+		insertTicker := time.NewTicker(time.Duration(dbb.InsertPeriod) * time.Second)
 		go func() {
 			for range insertTicker.C {
-				dbb.insertHandler(insertRows)
+				dbb.insertHandler(dbb.InsertRows)
 			}
 		}()
 	}()
@@ -186,7 +229,7 @@ func (dbb *DBBundle) exists(table string) bool {
 func (dbb *DBBundle) updateHandler(updateRows uint64) {
 	dbb.mutex.Lock()
 	defer dbb.mutex.Unlock()
-	for _, table := range dbb.updateTables {
+	for _, table := range dbb.UpdateTables {
 		dbb.report.mutex.Lock()
 		for key, status := range dbb.status {
 			if status.Table == table {
@@ -196,7 +239,7 @@ func (dbb *DBBundle) updateHandler(updateRows uint64) {
 		}
 		dbb.report.mutex.Unlock()
 		var errors uint64
-		dstTableName := dbb.tablePrefix + table + dbb.tablePostfix
+		dstTableName := dbb.TablePrefix + table + dbb.TablePostfix
 		rows, err := dbb.dstDriver.GetLimited(dstTableName, updateRows)
 		if err != nil {
 			if err != sql.ErrNoRows {
@@ -394,7 +437,7 @@ func (dbb *DBBundle) updateHandler(updateRows uint64) {
 func (dbb *DBBundle) insertHandler(insertRows uint64) {
 	dbb.mutex.Lock()
 	defer dbb.mutex.Unlock()
-	for _, table := range dbb.insertTables {
+	for _, table := range dbb.InsertTables {
 		dbb.report.mutex.Lock()
 		for key, status := range dbb.status {
 			if status.Table == table {
@@ -405,7 +448,7 @@ func (dbb *DBBundle) insertHandler(insertRows uint64) {
 		dbb.report.mutex.Unlock()
 
 		var errors uint64
-		dstTableName := dbb.tablePrefix + table + dbb.tablePostfix
+		dstTableName := dbb.TablePrefix + table + dbb.TablePostfix
 		srcID, err := dbb.srcDriver.LastID(table)
 		if err != nil {
 			dbb.errlog.Println("LastID - Table:", table, err)
@@ -416,8 +459,8 @@ func (dbb *DBBundle) insertHandler(insertRows uint64) {
 			dbb.errlog.Println("LastID - Table:", dstTableName, err)
 			errors++
 		}
-		if dstID < dbb.startAfterID {
-			dstID = dbb.startAfterID
+		if dstID < dbb.StartAfterID {
+			dstID = dbb.StartAfterID
 		}
 		dbb.report.mutex.Lock()
 		for key, status := range dbb.status {
