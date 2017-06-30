@@ -15,9 +15,9 @@ type MySQL struct {
 }
 
 // New creates MySQL driver
-func New(host, database, user, password string, port uint64) (db *MySQL, err error) {
+func New(host string, port uint64, database, username, password string) (db *MySQL, err error) {
 	db = new(MySQL)
-	db.driver, err = sql.Open("mysql", user+":"+password+
+	db.driver, err = sql.Open("mysql", username+":"+password+
 		"@tcp("+host+":"+fmt.Sprintf("%d", port)+")/"+database)
 	return
 }

@@ -15,9 +15,9 @@ type Postgres struct {
 }
 
 // New creates Postgres driver
-func New(host, database, user, password string, port uint64) (db *Postgres, err error) {
+func New(host string, port uint64, database, username, password string) (db *Postgres, err error) {
 	db = new(Postgres)
-	db.driver, err = sql.Open("postgres", "postgres://"+user+":"+password+
+	db.driver, err = sql.Open("postgres", "postgres://"+username+":"+password+
 		"@"+host+":"+fmt.Sprintf("%d", port)+"/"+database+"?sslmode=disable")
 	return
 }

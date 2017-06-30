@@ -10,7 +10,7 @@ type B2 struct {
 }
 
 // New creates B2 driver
-func New(host, database, user, password string, port uint64) (db *B2, err error) {
+func New(host string, port uint64, database, username, password string) (db *B2, err error) {
 	return nil, errors.New("Unsupported method")
 }
 

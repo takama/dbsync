@@ -10,7 +10,7 @@ type S3 struct {
 }
 
 // New creates S3 driver
-func New(host, database, user, password string, port uint64) (db *S3, err error) {
+func New(host string, port uint64, database, username, password string) (db *S3, err error) {
 	return nil, errors.New("Unsupported method")
 }
 
