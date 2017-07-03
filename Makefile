@@ -68,7 +68,7 @@ push: container
 	docker push $(PREFIX):$(RELEASE)
 
 .PHONY: run
-run: container
+run: stop container
 	docker run --name ${CONTAINER_NAME} -p ${DBSYNC_SERVICE_PORT}:${DBSYNC_SERVICE_PORT} \
 		-e "DBSYNC_SERVICE_PORT=${DBSYNC_SERVICE_PORT}" \
 		-e "DBSYNC_UPDATE_PERIOD=${DBSYNC_UPDATE_PERIOD}" \
@@ -93,6 +93,20 @@ run: container
 		-e "DBSYNC_DST_DB_TABLES_PREFIX=${DBSYNC_DST_DB_TABLES_PREFIX}" \
 		-e "DBSYNC_DST_DB_TABLES_POSTFIX=${DBSYNC_DST_DB_TABLES_POSTFIX}" \
 		-d $(PREFIX):$(RELEASE)
+	sleep 3
+	docker logs ${CONTAINER_NAME}
+
+HAS_RUNNED := $(shell docker ps | grep ${CONTAINER_NAME})
+HAS_EXITED := $(shell docker ps -a | grep ${CONTAINER_NAME})
+
+.PHONY: stop
+stop:
+ifdef HAS_RUNNED
+	@docker stop ${CONTAINER_NAME}
+endif
+ifdef HAS_EXITED
+	@docker rm ${CONTAINER_NAME}
+endif
 
 .PHONY: deploy
 deploy: push
