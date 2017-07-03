@@ -11,6 +11,7 @@ import (
 
 	"github.com/kelseyhightower/envconfig"
 	"github.com/takama/dbsync/pkg/datastore/b2"
+	"github.com/takama/dbsync/pkg/datastore/file"
 	"github.com/takama/dbsync/pkg/datastore/mysql"
 	"github.com/takama/dbsync/pkg/datastore/postgres"
 	"github.com/takama/dbsync/pkg/datastore/s3"
@@ -57,18 +58,24 @@ type DBBundle struct {
 
 	// ENV vars
 	SrcDbDriver   string `split_words:"true" required:"true"`
-	SrcDbHost     string `split_words:"true" required:"true"`
-	SrcDbPort     uint64 `split_words:"true" required:"true"`
-	SrcDbName     string `split_words:"true" required:"true"`
-	SrcDbUsername string `split_words:"true" required:"true"`
-	SrcDbPassword string `split_words:"true" required:"true"`
+	SrcDbHost     string `split_words:"true"`
+	SrcDbPort     uint64 `split_words:"true"`
+	SrcDbName     string `split_words:"true"`
+	SrcDbUsername string `split_words:"true"`
+	SrcDbPassword string `split_words:"true"`
 
 	DstDbDriver   string `split_words:"true" required:"true"`
-	DstDbHost     string `split_words:"true" required:"true"`
-	DstDbPort     uint64 `split_words:"true" required:"true"`
-	DstDbName     string `split_words:"true" required:"true"`
-	DstDbUsername string `split_words:"true" required:"true"`
-	DstDbPassword string `split_words:"true" required:"true"`
+	DstDbHost     string `split_words:"true"`
+	DstDbPort     uint64 `split_words:"true"`
+	DstDbName     string `split_words:"true"`
+	DstDbUsername string `split_words:"true"`
+	DstDbPassword string `split_words:"true"`
+
+	DstAccountID   string      `split_words:"true"`
+	DstAppKey      string      `split_words:"true"`
+	DstFilePath    file.Fields `split_words:"true"`
+	DstFileHeader  file.Fields `split_words:"true"`
+	DstFileColumns file.Fields `split_words:"true"`
 
 	UpdateTables []string `split_words:"true"`
 	InsertTables []string `split_words:"true"`
@@ -95,6 +102,7 @@ func New() (*DBBundle, error) {
 	}
 
 	bundle.stdlog.Println(bundle)
+
 	for _, table := range bundle.UpdateTables {
 		if !bundle.exists(table) {
 			bundle.status = append(bundle.status, Status{Table: table})
@@ -108,21 +116,9 @@ func New() (*DBBundle, error) {
 
 	switch strings.ToLower(bundle.SrcDbDriver) {
 	case "b2":
-		bundle.srcDriver, err = b2.New(
-			bundle.SrcDbHost, bundle.SrcDbPort, bundle.SrcDbName,
-			bundle.SrcDbUsername, bundle.SrcDbPassword,
-		)
-		if err != nil {
-			return bundle, err
-		}
+		return nil, b2.ErrUnsupported
 	case "s3":
-		bundle.srcDriver, err = s3.New(
-			bundle.SrcDbHost, bundle.SrcDbPort, bundle.SrcDbName,
-			bundle.SrcDbUsername, bundle.SrcDbPassword,
-		)
-		if err != nil {
-			return bundle, err
-		}
+		return nil, s3.ErrUnsupported
 	case "pgsql":
 		bundle.srcDriver, err = postgres.New(
 			bundle.SrcDbHost, bundle.SrcDbPort, bundle.SrcDbName,
@@ -145,20 +141,14 @@ func New() (*DBBundle, error) {
 	switch strings.ToLower(bundle.DstDbDriver) {
 	case "b2":
 		bundle.dstDriver, err = b2.New(
-			bundle.DstDbHost, bundle.DstDbPort, bundle.DstDbName,
-			bundle.DstDbUsername, bundle.DstDbPassword,
+			bundle.DstAccountID, bundle.DstAppKey,
+			bundle.DstFilePath, bundle.DstFileHeader, bundle.DstFileColumns...,
 		)
 		if err != nil {
 			return bundle, err
 		}
 	case "s3":
-		bundle.dstDriver, err = s3.New(
-			bundle.DstDbHost, bundle.DstDbPort, bundle.DstDbName,
-			bundle.DstDbUsername, bundle.DstDbPassword,
-		)
-		if err != nil {
-			return bundle, err
-		}
+		return nil, s3.ErrUnsupported
 	case "pgsql":
 		bundle.dstDriver, err = postgres.New(
 			bundle.DstDbHost, bundle.DstDbPort, bundle.DstDbName,
