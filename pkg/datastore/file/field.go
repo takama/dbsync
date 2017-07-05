@@ -7,8 +7,9 @@ import (
 
 // Field contains name and format of every data item
 type Field struct {
-	name   string
-	format string
+	Name   string
+	Type   string
+	Format string
 }
 
 // Fields declared as type which used in decoder
@@ -22,10 +23,10 @@ func (f *Fields) Decode(value string) error {
 	pairs := strings.Split(value, ",")
 	for _, pair := range pairs {
 		kv := strings.Split(pair, ":")
-		if len(kv) != 2 {
+		if len(kv) != 3 {
 			return fmt.Errorf("invalid struct item: %q", pair)
 		}
-		*f = append(*f, Field{kv[0], kv[1]})
+		*f = append(*f, Field{kv[0], kv[1], kv[2]})
 	}
 
 	return nil
