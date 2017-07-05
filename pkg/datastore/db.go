@@ -73,6 +73,9 @@ type DBBundle struct {
 
 	DstAccountID   string      `split_words:"true"`
 	DstAppKey      string      `split_words:"true"`
+	DstFileID      string      `split_words:"true"`
+	DstFilePrefix  string      `split_words:"true"`
+	DstFilePostfix string      `split_words:"true"`
 	DstFilePath    file.Fields `split_words:"true"`
 	DstFileHeader  file.Fields `split_words:"true"`
 	DstFileColumns file.Fields `split_words:"true"`
@@ -141,7 +144,8 @@ func New() (*DBBundle, error) {
 	switch strings.ToLower(bundle.DstDbDriver) {
 	case "b2":
 		bundle.dstDriver, err = b2.New(
-			bundle.DstAccountID, bundle.DstAppKey,
+			bundle.DstAccountID, bundle.DstAppKey, bundle.DstFileID,
+			bundle.DstFilePrefix, bundle.DstFilePostfix,
 			bundle.DstFilePath, bundle.DstFileHeader, bundle.DstFileColumns...,
 		)
 		if err != nil {
@@ -449,6 +453,7 @@ func (dbb *DBBundle) insertHandler(insertRows uint64) {
 			dbb.errlog.Println("LastID - Table:", dstTableName, err)
 			errors++
 		}
+		dbb.stdlog.Println("LastId:", dstID)
 		if dstID < dbb.StartAfterID {
 			dstID = dbb.StartAfterID
 		}
