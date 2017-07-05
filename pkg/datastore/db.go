@@ -9,12 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kelseyhightower/envconfig"
 	"github.com/takama/dbsync/pkg/datastore/b2"
 	"github.com/takama/dbsync/pkg/datastore/file"
 	"github.com/takama/dbsync/pkg/datastore/mysql"
 	"github.com/takama/dbsync/pkg/datastore/postgres"
 	"github.com/takama/dbsync/pkg/datastore/s3"
+	"github.com/takama/envconfig"
 )
 
 // DBHandler provide a simple handler interface for DB
