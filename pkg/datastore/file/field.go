@@ -7,6 +7,7 @@ import (
 
 // Field contains name and format of every data item
 type Field struct {
+	Topic  string
 	Name   string
 	Type   string
 	Format string
@@ -20,13 +21,17 @@ func (f *Fields) Decode(value string) error {
 	if strings.Trim(value, " ") == "" {
 		return nil
 	}
-	pairs := strings.Split(value, ",")
-	for _, pair := range pairs {
-		kv := strings.Split(pair, ":")
-		if len(kv) != 3 {
-			return fmt.Errorf("invalid struct item: %q", pair)
+	parts := strings.FieldsFunc(value, func(c rune) bool { return c == ',' || c == ' ' })
+	for _, part := range parts {
+		kv := strings.Split(part, ":")
+		switch len(kv) {
+		case 3:
+			*f = append(*f, Field{"", kv[0], kv[1], kv[2]})
+		case 4:
+			*f = append(*f, Field{kv[0], kv[1], kv[2], kv[3]})
+		default:
+			return fmt.Errorf("invalid struct item: %q", part)
 		}
-		*f = append(*f, Field{kv[0], kv[1], kv[2]})
 	}
 
 	return nil
