@@ -2,6 +2,7 @@ package datastore
 
 import (
 	"database/sql"
+	"errors"
 	"log"
 	"os"
 	"strconv"
@@ -19,7 +20,7 @@ import (
 
 // DBHandler provide a simple handler interface for DB
 type DBHandler interface {
-	Run()
+	Run() error
 	Report() []Status
 }
 
@@ -35,7 +36,7 @@ type Status struct {
 	Duration string
 }
 
-type replication interface {
+type sqlReplication interface {
 	LastID(table string) (uint64, error)
 	GetByID(table string, ID interface{}) (*sql.Row, error)
 	GetLimited(table string, limit uint64) (*sql.Rows, error)
@@ -44,15 +45,22 @@ type replication interface {
 	Insert(table string, columns []string, values []interface{}) (lastID uint64, err error)
 }
 
+type fileReplication interface {
+	LastID(bucket string) (uint64, error)
+	AddFromSQL(bucket string, columns []string, values []interface{}) (lastID uint64, err error)
+}
+
 // DBBundle contains drivers/tables information
 type DBBundle struct {
-	mutex     sync.RWMutex
-	stdlog    *log.Logger
-	errlog    *log.Logger
-	status    []Status
-	srcDriver replication
-	dstDriver replication
-	report    struct {
+	mutex         sync.RWMutex
+	stdlog        *log.Logger
+	errlog        *log.Logger
+	status        []Status
+	srcSQLDriver  sqlReplication
+	dstSQLDriver  sqlReplication
+	srcFileDriver fileReplication
+	dstFileDriver fileReplication
+	report        struct {
 		mutex sync.RWMutex
 	}
 
@@ -92,6 +100,15 @@ type DBBundle struct {
 	InsertRows   uint64 `split_words:"true" required:"true"`
 }
 
+// ErrUnsupportedFileToSQL declares error for unsupported methods
+var ErrUnsupportedFileToSQL = errors.New("Unsupported synchronization from file to SQL data")
+
+// ErrNothingToSyncSource declares error if unspecified source driver
+var ErrNothingToSyncSource = errors.New("Nothing to sync, please specify source driver")
+
+// ErrNothingToSyncDestination declares error if unspecified destination driver
+var ErrNothingToSyncDestination = errors.New("Nothing to sync, please specify destination driver")
+
 // New creates new server
 func New() (*DBBundle, error) {
 
@@ -123,7 +140,7 @@ func New() (*DBBundle, error) {
 	case "s3":
 		return nil, s3.ErrUnsupported
 	case "pgsql":
-		bundle.srcDriver, err = postgres.New(
+		bundle.srcSQLDriver, err = postgres.New(
 			bundle.SrcDbHost, bundle.SrcDbPort, bundle.SrcDbName,
 			bundle.SrcDbUsername, bundle.SrcDbPassword,
 		)
@@ -131,9 +148,7 @@ func New() (*DBBundle, error) {
 			return bundle, err
 		}
 	case "mysql":
-		fallthrough
-	default:
-		bundle.srcDriver, err = mysql.New(
+		bundle.srcSQLDriver, err = mysql.New(
 			bundle.SrcDbHost, bundle.SrcDbPort, bundle.SrcDbName,
 			bundle.SrcDbUsername, bundle.SrcDbPassword,
 		)
@@ -143,7 +158,7 @@ func New() (*DBBundle, error) {
 	}
 	switch strings.ToLower(bundle.DstDbDriver) {
 	case "b2":
-		bundle.dstDriver, err = b2.New(
+		bundle.dstFileDriver, err = b2.New(
 			bundle.DstAccountID, bundle.DstAppKey, bundle.DstFileID,
 			bundle.DstFileTopics, bundle.DstFilePath, bundle.DstFileName,
 			bundle.DstFileHeader, bundle.DstFileColumns,
@@ -154,7 +169,7 @@ func New() (*DBBundle, error) {
 	case "s3":
 		return nil, s3.ErrUnsupported
 	case "pgsql":
-		bundle.dstDriver, err = postgres.New(
+		bundle.dstSQLDriver, err = postgres.New(
 			bundle.DstDbHost, bundle.DstDbPort, bundle.DstDbName,
 			bundle.DstDbUsername, bundle.DstDbPassword,
 		)
@@ -162,9 +177,7 @@ func New() (*DBBundle, error) {
 			return bundle, err
 		}
 	case "mysql":
-		fallthrough
-	default:
-		bundle.dstDriver, err = mysql.New(
+		bundle.dstSQLDriver, err = mysql.New(
 			bundle.DstDbHost, bundle.DstDbPort, bundle.DstDbName,
 			bundle.DstDbUsername, bundle.DstDbPassword,
 		)
@@ -176,25 +189,63 @@ func New() (*DBBundle, error) {
 	return bundle, err
 }
 
-// Run implements interface that starts synchronization of the tables
-func (dbb *DBBundle) Run() {
+// Run implements interface that starts synchronization of the db items
+func (dbb *DBBundle) Run() error {
+	if dbb.srcFileDriver == nil && dbb.srcSQLDriver == nil {
+		// nothing to convert
+		return ErrNothingToSyncSource
+	}
+	if dbb.dstFileDriver == nil && dbb.dstSQLDriver == nil {
+		// nothing to convert
+		return ErrNothingToSyncDestination
+	}
+	if dbb.srcFileDriver != nil && dbb.dstSQLDriver != nil {
+		// unsupported (File to SQL)
+		return ErrUnsupportedFileToSQL
+	}
 	go func() {
-		dbb.updateHandler(dbb.UpdateRows)
-		dbb.insertHandler(dbb.InsertRows)
-		// setup handlers
-		updateTicker := time.NewTicker(time.Duration(dbb.UpdatePeriod) * time.Second)
-		go func() {
-			for range updateTicker.C {
-				dbb.updateHandler(dbb.UpdateRows)
+		if dbb.srcFileDriver != nil {
+			if dbb.dstFileDriver != nil {
+				dbb.syncFileToFileHandler(1)
 			}
-		}()
+		} else {
+			if dbb.dstFileDriver != nil {
+				dbb.fetchSQLHandler(true, dbb.InsertRows)
+			} else {
+				dbb.updateSQLToSQLHandler(dbb.UpdateRows)
+				dbb.fetchSQLHandler(false, dbb.InsertRows)
+			}
+		}
+		// setup handlers
+		if dbb.srcSQLDriver != nil && dbb.dstSQLDriver != nil {
+			// SQL to SQL
+			updateTicker := time.NewTicker(time.Duration(dbb.UpdatePeriod) * time.Second)
+			go func() {
+				for range updateTicker.C {
+					dbb.updateSQLToSQLHandler(dbb.UpdateRows)
+				}
+			}()
+		}
 		insertTicker := time.NewTicker(time.Duration(dbb.InsertPeriod) * time.Second)
 		go func() {
 			for range insertTicker.C {
-				dbb.insertHandler(dbb.InsertRows)
+				if dbb.srcFileDriver != nil {
+					if dbb.dstFileDriver != nil {
+						dbb.syncFileToFileHandler(1)
+					}
+				} else {
+					if dbb.dstFileDriver != nil {
+						dbb.fetchSQLHandler(true, dbb.InsertRows)
+					} else {
+						dbb.updateSQLToSQLHandler(dbb.UpdateRows)
+						dbb.fetchSQLHandler(false, dbb.InsertRows)
+					}
+				}
 			}
 		}()
 	}()
+
+	return nil
 }
 
 // Report implements interface that shows status detailed information
@@ -220,7 +271,7 @@ func (dbb *DBBundle) exists(table string) bool {
 	return alreadyExists
 }
 
-func (dbb *DBBundle) updateHandler(updateRows uint64) {
+func (dbb *DBBundle) updateSQLToSQLHandler(updateRows uint64) {
 	dbb.mutex.Lock()
 	defer dbb.mutex.Unlock()
 	for _, table := range dbb.UpdateTables {
@@ -234,7 +285,7 @@ func (dbb *DBBundle) updateHandler(updateRows uint64) {
 		dbb.report.mutex.Unlock()
 		var errors uint64
 		dstTableName := dbb.TablePrefix + table + dbb.TablePostfix
-		rows, err := dbb.dstDriver.GetLimited(dstTableName, updateRows)
+		rows, err := dbb.dstSQLDriver.GetLimited(dstTableName, updateRows)
 		if err != nil {
 			if err != sql.ErrNoRows {
 				dbb.errlog.Println("GetLimited - Table:", dstTableName, err)
@@ -266,7 +317,7 @@ func (dbb *DBBundle) updateHandler(updateRows uint64) {
 					case int64:
 						id = strconv.FormatInt(v, 10)
 					}
-					row, err := dbb.srcDriver.GetByID(table, data[0])
+					row, err := dbb.srcSQLDriver.GetByID(table, data[0])
 					if err != nil {
 						dbb.errlog.Println("[Table:", table, "ID:"+id+"]", err)
 						errors++
@@ -398,7 +449,7 @@ func (dbb *DBBundle) updateHandler(updateRows uint64) {
 							}
 						}
 						if update {
-							count, err := dbb.dstDriver.Update(dstTableName, columns, srcData)
+							count, err := dbb.dstSQLDriver.Update(dstTableName, columns, srcData)
 							if err != nil {
 								dbb.errlog.Println("Update - Table:", dstTableName, err)
 								errors++
@@ -428,7 +479,7 @@ func (dbb *DBBundle) updateHandler(updateRows uint64) {
 	}
 }
 
-func (dbb *DBBundle) insertHandler(insertRows uint64) {
+func (dbb *DBBundle) fetchSQLHandler(intoFile bool, insertRows uint64) {
 	dbb.mutex.Lock()
 	defer dbb.mutex.Unlock()
 	for _, table := range dbb.InsertTables {
@@ -443,12 +494,17 @@ func (dbb *DBBundle) insertHandler(insertRows uint64) {
 
 		var errors uint64
 		dstTableName := dbb.TablePrefix + table + dbb.TablePostfix
-		srcID, err := dbb.srcDriver.LastID(table)
+		srcID, err := dbb.srcSQLDriver.LastID(table)
 		if err != nil {
 			dbb.errlog.Println("LastID - Table:", table, err)
 			errors++
 		}
-		dstID, err := dbb.dstDriver.LastID(dstTableName)
+		var dstID uint64
+		if intoFile {
+			dstID, err = dbb.dstFileDriver.LastID(dstTableName)
+		} else {
+			dstID, err = dbb.dstSQLDriver.LastID(dstTableName)
+		}
 		if err != nil {
 			dbb.errlog.Println("LastID - Table:", dstTableName, err)
 			errors++
@@ -466,7 +522,7 @@ func (dbb *DBBundle) insertHandler(insertRows uint64) {
 		dbb.report.mutex.Unlock()
 		if dstID < srcID {
 			for {
-				rows, err := dbb.srcDriver.GetLimitedAfterID(table, dstID, insertRows)
+				rows, err := dbb.srcSQLDriver.GetLimitedAfterID(table, dstID, insertRows)
 				if err != nil {
 					dbb.errlog.Println("GetLimitedAfterID - Table:", table, err)
 					errors++
@@ -487,7 +543,12 @@ func (dbb *DBBundle) insertHandler(insertRows uint64) {
 							dbb.errlog.Println(err)
 							errors++
 						} else {
-							last, err := dbb.dstDriver.Insert(dstTableName, columns, data)
+							var last uint64
+							if intoFile {
+								last, err = dbb.dstFileDriver.AddFromSQL(dstTableName, columns, data)
+							} else {
+								last, err = dbb.dstSQLDriver.Insert(dstTableName, columns, data)
+							}
 							if err != nil {
 								dbb.errlog.Println("Insert - Table:", dstTableName, err)
 								errors++
@@ -530,4 +591,8 @@ func (dbb *DBBundle) insertHandler(insertRows uint64) {
 		}
 		dbb.report.mutex.Unlock()
 	}
+}
+
+func (dbb *DBBundle) syncFileToFileHandler(syncFiles uint64) {
+
 }
