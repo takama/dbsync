@@ -71,14 +71,14 @@ type DBBundle struct {
 	DstDbUsername string `split_words:"true"`
 	DstDbPassword string `split_words:"true"`
 
-	DstAccountID     string      `split_words:"true"`
-	DstAppKey        string      `split_words:"true"`
-	DstFileID        string      `split_words:"true"`
-	DstFileExtension string      `split_words:"true"`
-	DstFileTopics    []string    `split_words:"true"`
-	DstFilePath      file.Fields `split_words:"true"`
-	DstFileHeader    file.Fields `split_words:"true"`
-	DstFileColumns   file.Fields `split_words:"true"`
+	DstAccountID   string      `split_words:"true"`
+	DstAppKey      string      `split_words:"true"`
+	DstFileID      string      `split_words:"true"`
+	DstFileTopics  []string    `split_words:"true"`
+	DstFilePath    file.Fields `split_words:"true"`
+	DstFileName    file.Fields `split_words:"true"`
+	DstFileHeader  file.Fields `split_words:"true"`
+	DstFileColumns file.Fields `split_words:"true"`
 
 	UpdateTables []string `split_words:"true"`
 	InsertTables []string `split_words:"true"`
@@ -145,8 +145,8 @@ func New() (*DBBundle, error) {
 	case "b2":
 		bundle.dstDriver, err = b2.New(
 			bundle.DstAccountID, bundle.DstAppKey, bundle.DstFileID,
-			bundle.DstFileExtension, bundle.DstFileTopics,
-			bundle.DstFilePath, bundle.DstFileHeader, bundle.DstFileColumns,
+			bundle.DstFileTopics, bundle.DstFilePath, bundle.DstFileName,
+			bundle.DstFileHeader, bundle.DstFileColumns,
 		)
 		if err != nil {
 			return bundle, err
