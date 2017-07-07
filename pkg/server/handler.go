@@ -86,7 +86,7 @@ func Run() (srv http.Server, err error) {
 	}
 	srv.Addr = ":" + os.Getenv("DBSYNC_SERVICE_PORT")
 	srv.Handler = h
-	h.DBHandler.Run()
+	err = h.DBHandler.Run()
 
 	return
 }
