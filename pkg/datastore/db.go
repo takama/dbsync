@@ -83,6 +83,7 @@ type DBBundle struct {
 	DstAppKey      string      `split_words:"true"`
 	DstFileID      string      `split_words:"true"`
 	DstFileTopics  []string    `split_words:"true"`
+	DstFileSpec    file.Fields `split_words:"true"`
 	DstFilePath    file.Fields `split_words:"true"`
 	DstFileName    file.Fields `split_words:"true"`
 	DstFileHeader  file.Fields `split_words:"true"`
@@ -98,6 +99,8 @@ type DBBundle struct {
 	InsertPeriod uint64 `split_words:"true" required:"true"`
 	UpdateRows   uint64 `split_words:"true" required:"true"`
 	InsertRows   uint64 `split_words:"true" required:"true"`
+
+	FileDataDir string `split_words:"true"`
 }
 
 // ErrUnsupportedFileToSQL declares error for unsupported methods
@@ -159,8 +162,8 @@ func New() (*DBBundle, error) {
 	switch strings.ToLower(bundle.DstDbDriver) {
 	case "b2":
 		bundle.dstFileDriver, err = b2.New(
-			bundle.DstAccountID, bundle.DstAppKey, bundle.DstFileID,
-			bundle.DstFileTopics, bundle.DstFilePath, bundle.DstFileName,
+			bundle.DstAccountID, bundle.DstAppKey, bundle.DstFileID, bundle.DstFileTopics,
+			bundle.DstFileSpec, bundle.DstFilePath, bundle.DstFileName,
 			bundle.DstFileHeader, bundle.DstFileColumns,
 		)
 		if err != nil {
@@ -180,6 +183,15 @@ func New() (*DBBundle, error) {
 		bundle.dstSQLDriver, err = mysql.New(
 			bundle.DstDbHost, bundle.DstDbPort, bundle.DstDbName,
 			bundle.DstDbUsername, bundle.DstDbPassword,
+		)
+		if err != nil {
+			return bundle, err
+		}
+	case "file":
+		bundle.dstFileDriver, err = file.New(
+			bundle.FileDataDir, bundle.DstFileID, bundle.DstFileTopics,
+			bundle.DstFileSpec, bundle.DstFilePath, bundle.DstFileName,
+			bundle.DstFileHeader, bundle.DstFileColumns,
 		)
 		if err != nil {
 			return bundle, err
