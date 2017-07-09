@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -46,9 +45,7 @@ func New(
 		header:  header,
 		columns: columns,
 	}
-	log.Println(db)
 	client, err := blazer.NewClient(db.ctx, accountID, appKey)
-	log.Println(err)
 	if err != nil {
 		return
 	}
@@ -108,7 +105,6 @@ func (db *B2) AddFromSQL(bucket string, columns []string, values []interface{}) 
 			}
 			path = path + db.generateData(field, "/", "", false, columns, values)
 		}
-		log.Println("Path:", path)
 
 		// Generate header
 		data := "\n"
@@ -134,7 +130,6 @@ func (db *B2) AddFromSQL(bucket string, columns []string, values []interface{}) 
 				": ", "\n", true, columns, values,
 			)
 		}
-		log.Println("Data:", data)
 
 		// Save data
 		datafile := bkt.Object(path)
@@ -210,7 +205,6 @@ func (db *B2) getOrCreateLastID(bkt *blazer.Bucket) (id uint64, err error) {
 	lastID := bkt.Object("lastID")
 	_, err = lastID.Attrs(db.ctx)
 	if err != nil {
-		log.Println("Create lastID")
 		w := lastID.NewWriter(db.ctx)
 		defer w.Close()
 		if _, err := io.Copy(w, strings.NewReader("0")); err != nil {

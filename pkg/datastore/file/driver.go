@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -44,7 +43,6 @@ func New(
 		columns: columns,
 	}
 	err = db.checkDatastorePath()
-	log.Println(db)
 	return
 }
 
@@ -84,7 +82,6 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 			}
 			path = path + db.generateData(field, string(os.PathSeparator), "", false, columns, values)
 		}
-		log.Println("Path:", path)
 
 		// Generate header
 		data := "\n"
@@ -110,7 +107,6 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 				": ", "\n", true, columns, values,
 			)
 		}
-		log.Println("Data:", data)
 
 		// Save data
 		err = db.save(bucket, path, data)
