@@ -12,6 +12,7 @@ import (
 
 	"github.com/takama/dbsync/pkg/datastore/b2"
 	"github.com/takama/dbsync/pkg/datastore/file"
+	"github.com/takama/dbsync/pkg/datastore/mapping"
 	"github.com/takama/dbsync/pkg/datastore/mysql"
 	"github.com/takama/dbsync/pkg/datastore/postgres"
 	"github.com/takama/dbsync/pkg/datastore/s3"
@@ -79,15 +80,16 @@ type DBBundle struct {
 	DstDbUsername string `split_words:"true"`
 	DstDbPassword string `split_words:"true"`
 
-	DstAccountID   string      `split_words:"true"`
-	DstAppKey      string      `split_words:"true"`
-	DstFileID      string      `split_words:"true"`
-	DstFileTopics  []string    `split_words:"true"`
-	DstFileSpec    file.Fields `split_words:"true"`
-	DstFilePath    file.Fields `split_words:"true"`
-	DstFileName    file.Fields `split_words:"true"`
-	DstFileHeader  file.Fields `split_words:"true"`
-	DstFileColumns file.Fields `split_words:"true"`
+	DstAccountID   string         `split_words:"true"`
+	DstAppKey      string         `split_words:"true"`
+	DstFileJSON    bool           `split_words:"true"`
+	DstFileID      string         `split_words:"true"`
+	DstFileTopics  []string       `split_words:"true"`
+	DstFileSpec    mapping.Fields `split_words:"true"`
+	DstFilePath    mapping.Fields `split_words:"true"`
+	DstFileName    mapping.Fields `split_words:"true"`
+	DstFileHeader  mapping.Fields `split_words:"true"`
+	DstFileColumns mapping.Fields `split_words:"true"`
 
 	UpdateTables []string `split_words:"true"`
 	InsertTables []string `split_words:"true"`
@@ -123,8 +125,6 @@ func New() (*DBBundle, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	bundle.stdlog.Println(bundle)
 
 	for _, table := range bundle.UpdateTables {
 		if !bundle.exists(table) {
@@ -162,8 +162,8 @@ func New() (*DBBundle, error) {
 	switch strings.ToLower(bundle.DstDbDriver) {
 	case "b2":
 		bundle.dstFileDriver, err = b2.New(
-			bundle.DstAccountID, bundle.DstAppKey, bundle.DstFileID, bundle.DstFileTopics,
-			bundle.DstFileSpec, bundle.DstFilePath, bundle.DstFileName,
+			bundle.DstAccountID, bundle.DstAppKey, bundle.DstFileID, bundle.DstFileJSON,
+			bundle.DstFileTopics, bundle.DstFileSpec, bundle.DstFilePath, bundle.DstFileName,
 			bundle.DstFileHeader, bundle.DstFileColumns,
 		)
 		if err != nil {
@@ -189,8 +189,8 @@ func New() (*DBBundle, error) {
 		}
 	case "file":
 		bundle.dstFileDriver, err = file.New(
-			bundle.FileDataDir, bundle.DstFileID, bundle.DstFileTopics,
-			bundle.DstFileSpec, bundle.DstFilePath, bundle.DstFileName,
+			bundle.FileDataDir, bundle.DstFileID, bundle.DstFileJSON,
+			bundle.DstFileTopics, bundle.DstFileSpec, bundle.DstFilePath, bundle.DstFileName,
 			bundle.DstFileHeader, bundle.DstFileColumns,
 		)
 		if err != nil {
@@ -521,7 +521,6 @@ func (dbb *DBBundle) fetchSQLHandler(intoFile bool, insertRows uint64) {
 			dbb.errlog.Println("LastID - Table:", dstTableName, err)
 			errors++
 		}
-		dbb.stdlog.Println("LastId:", dstID)
 		if dstID < dbb.StartAfterID {
 			dstID = dbb.StartAfterID
 		}
