@@ -15,9 +15,9 @@ type MySQL struct {
 }
 
 // New creates MySQL driver
-func New(host, database, user, password string, port uint64) (db *MySQL, err error) {
+func New(host string, port uint64, database, username, password string) (db *MySQL, err error) {
 	db = new(MySQL)
-	db.driver, err = sql.Open("mysql", user+":"+password+
+	db.driver, err = sql.Open("mysql", username+":"+password+
 		"@tcp("+host+":"+fmt.Sprintf("%d", port)+")/"+database)
 	return
 }
@@ -32,8 +32,8 @@ func (db *MySQL) LastID(table string) (id uint64, err error) {
 }
 
 // GetByID implements interface for getting table row by ID
-func (db *MySQL) GetByID(table string, ID interface{}) *sql.Row {
-	return db.driver.QueryRow("SELECT * FROM "+table+" WHERE ID = ?", ID)
+func (db *MySQL) GetByID(table string, ID interface{}) (*sql.Row, error) {
+	return db.driver.QueryRow("SELECT * FROM "+table+" WHERE ID = ?", ID), nil
 }
 
 // GetLimited implements interface for getting last limited table rows by ID
