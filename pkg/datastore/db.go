@@ -12,6 +12,7 @@ import (
 
 	"github.com/takama/dbsync/pkg/datastore/b2"
 	"github.com/takama/dbsync/pkg/datastore/file"
+	"github.com/takama/dbsync/pkg/datastore/mapping"
 	"github.com/takama/dbsync/pkg/datastore/mysql"
 	"github.com/takama/dbsync/pkg/datastore/postgres"
 	"github.com/takama/dbsync/pkg/datastore/s3"
@@ -79,15 +80,15 @@ type DBBundle struct {
 	DstDbUsername string `split_words:"true"`
 	DstDbPassword string `split_words:"true"`
 
-	DstAccountID   string      `split_words:"true"`
-	DstAppKey      string      `split_words:"true"`
-	DstFileID      string      `split_words:"true"`
-	DstFileTopics  []string    `split_words:"true"`
-	DstFileSpec    file.Fields `split_words:"true"`
-	DstFilePath    file.Fields `split_words:"true"`
-	DstFileName    file.Fields `split_words:"true"`
-	DstFileHeader  file.Fields `split_words:"true"`
-	DstFileColumns file.Fields `split_words:"true"`
+	DstAccountID   string         `split_words:"true"`
+	DstAppKey      string         `split_words:"true"`
+	DstFileID      string         `split_words:"true"`
+	DstFileTopics  []string       `split_words:"true"`
+	DstFileSpec    mapping.Fields `split_words:"true"`
+	DstFilePath    mapping.Fields `split_words:"true"`
+	DstFileName    mapping.Fields `split_words:"true"`
+	DstFileHeader  mapping.Fields `split_words:"true"`
+	DstFileColumns mapping.Fields `split_words:"true"`
 
 	UpdateTables []string `split_words:"true"`
 	InsertTables []string `split_words:"true"`

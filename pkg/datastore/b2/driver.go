@@ -11,7 +11,7 @@ import (
 	"time"
 
 	blazer "github.com/kurin/blazer/b2"
-	"github.com/takama/dbsync/pkg/datastore/file"
+	"github.com/takama/dbsync/pkg/datastore/mapping"
 )
 
 // B2 driver
@@ -20,11 +20,11 @@ type B2 struct {
 	*blazer.Client
 	id      string
 	topics  []string
-	spec    file.Fields
-	path    file.Fields
-	name    file.Fields
-	header  file.Fields
-	columns file.Fields
+	spec    mapping.Fields
+	path    mapping.Fields
+	name    mapping.Fields
+	header  mapping.Fields
+	columns mapping.Fields
 }
 
 // ErrUnsupported declares error for unsupported methods
@@ -33,7 +33,7 @@ var ErrUnsupported = errors.New("Unsupported method for BackBlaze B2")
 // New creates B2 driver
 func New(
 	accountID, appKey, id string, topics []string,
-	spec, path, name, header, columns file.Fields,
+	spec, path, name, header, columns mapping.Fields,
 ) (db *B2, err error) {
 	db = &B2{
 		ctx:     context.Background(),
@@ -95,7 +95,7 @@ func (db *B2) AddFromSQL(bucket string, columns []string, values []interface{}) 
 			if field.Topic != "" && field.Topic != topic {
 				continue
 			}
-			path = path + db.generateData(field, "/", "", false, columns, values)
+			path = path + mapping.Render(field, "/", "", false, false, columns, values)
 		}
 
 		// Generate name
@@ -103,7 +103,7 @@ func (db *B2) AddFromSQL(bucket string, columns []string, values []interface{}) 
 			if field.Topic != "" && field.Topic != topic {
 				continue
 			}
-			path = path + db.generateData(field, "/", "", false, columns, values)
+			path = path + mapping.Render(field, "/", "", false, false, columns, values)
 		}
 
 		// Generate header
@@ -112,22 +112,24 @@ func (db *B2) AddFromSQL(bucket string, columns []string, values []interface{}) 
 			if field.Topic != "" && field.Topic != topic {
 				continue
 			}
-			data = data + db.generateData(field, " ", "", false, columns, values)
+			data = data + mapping.Render(field, " ", "", false, false, columns, values)
 		}
 		data = data + "\n" + strings.Repeat("=", len(data)) + "\n"
 
 		// Generate data columns
 		if len(db.columns) > 0 {
+			data = data + "{"
 			for _, field := range db.columns {
 				if field.Topic != "" && field.Topic != topic {
 					continue
 				}
-				data = data + db.generateData(field, ": ", "\n", true, columns, values)
+				data = data + mapping.Render(field, ": ", ", ", true, true, columns, values)
 			}
+			data = strings.Trim(data, ",") + "}"
 		} else {
-			data = data + db.generateData(
-				file.Field{Type: "string", Format: "%s"},
-				": ", "\n", true, columns, values,
+			data = data + mapping.Render(
+				mapping.Field{Type: "string", Format: "%s"},
+				": ", "\n", true, false, columns, values,
 			)
 		}
 
@@ -151,7 +153,7 @@ func (db *B2) AddFromSQL(bucket string, columns []string, values []interface{}) 
 }
 
 func (db *B2) generateData(
-	field file.Field, delimiter, finalizer string, useNames bool,
+	field mapping.Field, delimiter, finalizer string, useNames bool,
 	columns []string, values []interface{},
 ) (data string) {
 	const (

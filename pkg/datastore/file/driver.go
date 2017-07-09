@@ -4,12 +4,12 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
+
+	"github.com/takama/dbsync/pkg/datastore/mapping"
 )
 
 // File driver
@@ -17,11 +17,11 @@ type File struct {
 	dataDir string
 	id      string
 	topics  []string
-	spec    Fields
-	path    Fields
-	name    Fields
-	header  Fields
-	columns Fields
+	spec    mapping.Fields
+	path    mapping.Fields
+	name    mapping.Fields
+	header  mapping.Fields
+	columns mapping.Fields
 }
 
 // ErrUnsupported declares error for unsupported methods
@@ -30,7 +30,7 @@ var ErrUnsupported = errors.New("Unsupported method for file syncing")
 // New creates file driver
 func New(
 	dataDir, id string, topics []string,
-	spec, path, name, header, columns Fields,
+	spec, path, name, header, columns mapping.Fields,
 ) (db *File, err error) {
 	db = &File{
 		dataDir: dataDir,
@@ -72,7 +72,7 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 			if field.Topic != "" && field.Topic != topic {
 				continue
 			}
-			path = path + db.generateData(field, string(os.PathSeparator), "", false, columns, values)
+			path = path + mapping.Render(field, string(os.PathSeparator), "", false, false, columns, values)
 		}
 
 		// Generate name
@@ -80,7 +80,7 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 			if field.Topic != "" && field.Topic != topic {
 				continue
 			}
-			path = path + db.generateData(field, string(os.PathSeparator), "", false, columns, values)
+			path = path + mapping.Render(field, string(os.PathSeparator), "", false, false, columns, values)
 		}
 
 		// Generate header
@@ -89,22 +89,24 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 			if field.Topic != "" && field.Topic != topic {
 				continue
 			}
-			data = data + db.generateData(field, " ", "", false, columns, values)
+			data = data + mapping.Render(field, " ", "", false, false, columns, values)
 		}
 		data = data + "\n" + strings.Repeat("=", len(data)) + "\n"
 
 		// Generate data columns
 		if len(db.columns) > 0 {
+			data = data + "{"
 			for _, field := range db.columns {
 				if field.Topic != "" && field.Topic != topic {
 					continue
 				}
-				data = data + db.generateData(field, ": ", "\n", true, columns, values)
+				data = data + mapping.Render(field, ": ", ", ", true, true, columns, values)
 			}
+			data = strings.Trim(data, ",") + "}"
 		} else {
-			data = data + db.generateData(
-				Field{Type: "string", Format: "%s"},
-				": ", "\n", true, columns, values,
+			data = data + mapping.Render(
+				mapping.Field{Type: "string", Format: "%s"},
+				": ", "\n", true, false, columns, values,
 			)
 		}
 
@@ -120,7 +122,7 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 	for _, spec := range db.spec {
 		if strings.ToLower(spec.Topic) == "at" ||
 			(spec.Topic == "" && strings.ToLower(spec.Name) == "at") {
-			at = db.generateData(spec, "", "", false, columns, values)
+			at = mapping.Render(spec, "", "", false, false, columns, values)
 		}
 	}
 	// Save Last ID and AT
@@ -128,43 +130,6 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 	if err != nil {
 		return 0, err
 	}
-	return
-}
-
-func (db *File) generateData(
-	field Field, delimiter, finalizer string, useNames bool,
-	columns []string, values []interface{},
-) (data string) {
-	const (
-		timeTemplate = "2006-01-02 15:04:05"
-		dateTemplate = "2006-01-02"
-	)
-	dlm := delimiter
-	for ndx, name := range columns {
-		if field.Name != "" && field.Name != name {
-			continue
-		}
-		if value, ok := values[ndx].([]byte); ok {
-			if useNames {
-				dlm = name + delimiter
-			}
-			switch field.Type {
-			case "string":
-				data = data + dlm + fmt.Sprintf(field.Format, string(value)) + finalizer
-			case "date":
-				time, err := time.Parse(timeTemplate, string(value))
-				if err != nil {
-					data = data + dlm + fmt.Sprintf(field.Format, string(value))
-				} else {
-					data = data + dlm + fmt.Sprintf(field.Format, time.Format(dateTemplate))
-				}
-				data = data + finalizer
-			case "time":
-				data = data + dlm + fmt.Sprintf(field.Format, string(value)) + finalizer
-			}
-		}
-	}
-
 	return
 }
 
