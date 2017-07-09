@@ -125,8 +125,6 @@ func New() (*DBBundle, error) {
 		return nil, err
 	}
 
-	bundle.stdlog.Println(bundle)
-
 	for _, table := range bundle.UpdateTables {
 		if !bundle.exists(table) {
 			bundle.status = append(bundle.status, Status{Table: table})
@@ -522,7 +520,6 @@ func (dbb *DBBundle) fetchSQLHandler(intoFile bool, insertRows uint64) {
 			dbb.errlog.Println("LastID - Table:", dstTableName, err)
 			errors++
 		}
-		dbb.stdlog.Println("LastId:", dstID)
 		if dstID < dbb.StartAfterID {
 			dstID = dbb.StartAfterID
 		}
