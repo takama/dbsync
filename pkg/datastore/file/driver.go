@@ -15,6 +15,7 @@ import (
 // File driver
 type File struct {
 	dataDir string
+	json    bool
 	id      string
 	topics  []string
 	spec    mapping.Fields
@@ -29,11 +30,12 @@ var ErrUnsupported = errors.New("Unsupported method for file syncing")
 
 // New creates file driver
 func New(
-	dataDir, id string, topics []string,
+	dataDir, id string, json bool, topics []string,
 	spec, path, name, header, columns mapping.Fields,
 ) (db *File, err error) {
 	db = &File{
 		dataDir: dataDir,
+		json:    json,
 		id:      id,
 		topics:  topics,
 		spec:    spec,
@@ -95,14 +97,23 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 
 		// Generate data columns
 		if len(db.columns) > 0 {
-			data = data + "{"
-			for _, field := range db.columns {
-				if field.Topic != "" && field.Topic != topic {
-					continue
+			if db.json {
+				data = data + "{"
+				for _, field := range db.columns {
+					if field.Topic != "" && field.Topic != topic {
+						continue
+					}
+					data = data + mapping.Render(field, ": ", ", ", true, true, columns, values)
 				}
-				data = data + mapping.Render(field, ": ", ", ", true, true, columns, values)
+				data = strings.Trim(data, ", ") + "}"
+			} else {
+				for _, field := range db.columns {
+					if field.Topic != "" && field.Topic != topic {
+						continue
+					}
+					data = data + mapping.Render(field, ": ", "\n", true, false, columns, values)
+				}
 			}
-			data = strings.Trim(data, ",") + "}"
 		} else {
 			data = data + mapping.Render(
 				mapping.Field{Type: "string", Format: "%s"},

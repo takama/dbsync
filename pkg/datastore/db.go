@@ -82,6 +82,7 @@ type DBBundle struct {
 
 	DstAccountID   string         `split_words:"true"`
 	DstAppKey      string         `split_words:"true"`
+	DstFileJSON    bool           `split_words:"true"`
 	DstFileID      string         `split_words:"true"`
 	DstFileTopics  []string       `split_words:"true"`
 	DstFileSpec    mapping.Fields `split_words:"true"`
@@ -161,8 +162,8 @@ func New() (*DBBundle, error) {
 	switch strings.ToLower(bundle.DstDbDriver) {
 	case "b2":
 		bundle.dstFileDriver, err = b2.New(
-			bundle.DstAccountID, bundle.DstAppKey, bundle.DstFileID, bundle.DstFileTopics,
-			bundle.DstFileSpec, bundle.DstFilePath, bundle.DstFileName,
+			bundle.DstAccountID, bundle.DstAppKey, bundle.DstFileID, bundle.DstFileJSON,
+			bundle.DstFileTopics, bundle.DstFileSpec, bundle.DstFilePath, bundle.DstFileName,
 			bundle.DstFileHeader, bundle.DstFileColumns,
 		)
 		if err != nil {
@@ -188,8 +189,8 @@ func New() (*DBBundle, error) {
 		}
 	case "file":
 		bundle.dstFileDriver, err = file.New(
-			bundle.FileDataDir, bundle.DstFileID, bundle.DstFileTopics,
-			bundle.DstFileSpec, bundle.DstFilePath, bundle.DstFileName,
+			bundle.FileDataDir, bundle.DstFileID, bundle.DstFileJSON,
+			bundle.DstFileTopics, bundle.DstFileSpec, bundle.DstFilePath, bundle.DstFileName,
 			bundle.DstFileHeader, bundle.DstFileColumns,
 		)
 		if err != nil {

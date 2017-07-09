@@ -18,6 +18,7 @@ import (
 type B2 struct {
 	ctx context.Context
 	*blazer.Client
+	json    bool
 	id      string
 	topics  []string
 	spec    mapping.Fields
@@ -32,11 +33,12 @@ var ErrUnsupported = errors.New("Unsupported method for BackBlaze B2")
 
 // New creates B2 driver
 func New(
-	accountID, appKey, id string, topics []string,
+	accountID, appKey, id string, json bool, topics []string,
 	spec, path, name, header, columns mapping.Fields,
 ) (db *B2, err error) {
 	db = &B2{
 		ctx:     context.Background(),
+		json:    json,
 		id:      id,
 		topics:  topics,
 		spec:    spec,
@@ -118,14 +120,23 @@ func (db *B2) AddFromSQL(bucket string, columns []string, values []interface{}) 
 
 		// Generate data columns
 		if len(db.columns) > 0 {
-			data = data + "{"
-			for _, field := range db.columns {
-				if field.Topic != "" && field.Topic != topic {
-					continue
+			if db.json {
+				data = data + "{"
+				for _, field := range db.columns {
+					if field.Topic != "" && field.Topic != topic {
+						continue
+					}
+					data = data + mapping.Render(field, ": ", ", ", true, true, columns, values)
 				}
-				data = data + mapping.Render(field, ": ", ", ", true, true, columns, values)
+				data = strings.Trim(data, ", ") + "}"
+			} else {
+				for _, field := range db.columns {
+					if field.Topic != "" && field.Topic != topic {
+						continue
+					}
+					data = data + mapping.Render(field, ": ", "\n", true, false, columns, values)
+				}
 			}
-			data = strings.Trim(data, ",") + "}"
 		} else {
 			data = data + mapping.Render(
 				mapping.Field{Type: "string", Format: "%s"},
