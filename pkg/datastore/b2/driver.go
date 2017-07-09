@@ -4,11 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"strconv"
 	"strings"
-	"time"
 
 	blazer "github.com/kurin/blazer/b2"
 	"github.com/takama/dbsync/pkg/datastore/mapping"
@@ -160,43 +158,6 @@ func (db *B2) AddFromSQL(bucket string, columns []string, values []interface{}) 
 	if _, err := io.Copy(w, strings.NewReader(lastID)); err != nil {
 		return 0, err
 	}
-	return
-}
-
-func (db *B2) generateData(
-	field mapping.Field, delimiter, finalizer string, useNames bool,
-	columns []string, values []interface{},
-) (data string) {
-	const (
-		timeTemplate = "2006-01-02 15:04:05"
-		dateTemplate = "2006-01-02"
-	)
-	dlm := delimiter
-	for ndx, name := range columns {
-		if field.Name != "" && field.Name != name {
-			continue
-		}
-		if value, ok := values[ndx].([]byte); ok {
-			if useNames {
-				dlm = name + delimiter
-			}
-			switch field.Type {
-			case "string":
-				data = data + dlm + fmt.Sprintf(field.Format, string(value)) + finalizer
-			case "date":
-				time, err := time.Parse(timeTemplate, string(value))
-				if err != nil {
-					data = data + dlm + fmt.Sprintf(field.Format, string(value))
-				} else {
-					data = data + dlm + fmt.Sprintf(field.Format, time.Format(dateTemplate))
-				}
-				data = data + finalizer
-			case "time":
-				data = data + dlm + fmt.Sprintf(field.Format, string(value)) + finalizer
-			}
-		}
-	}
-
 	return
 }
 
