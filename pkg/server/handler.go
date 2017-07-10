@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"text/template"
 
 	"github.com/takama/dbsync/pkg/datastore"
@@ -75,7 +77,7 @@ func writeError(w http.ResponseWriter, code int) {
 }
 
 // Run server with env and handler
-func Run() (srv http.Server, err error) {
+func Run() (err error) {
 	h := &handler{
 		stdlog: log.New(os.Stdout, "[DBSYNC:INFO]: ", log.LstdFlags),
 		errlog: log.New(os.Stderr, "[DBSYNC:ERROR]: ", log.Ldate|log.Ltime|log.Lshortfile),
@@ -84,9 +86,37 @@ func Run() (srv http.Server, err error) {
 	if err != nil {
 		return
 	}
-	srv.Addr = ":" + os.Getenv("DBSYNC_SERVICE_PORT")
-	srv.Handler = h
+	srv := http.Server{
+		Addr:    ":" + os.Getenv("DBSYNC_SERVICE_PORT"),
+		Handler: h,
+	}
 	err = h.DBHandler.Run()
+	if err != nil {
+		return
+	}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil {
+			h.errlog.Fatalln(err)
+		}
+	}()
+
+	// Set up channel on which to send signal notifications.
+	// We must use a buffered channel or risk missing the signal
+	// if we're not ready to receive when the signal is sent.
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, os.Interrupt, os.Kill, syscall.SIGTERM)
+	killSignal := <-interrupt
+	h.stdlog.Println("Got signal:", killSignal)
+	err = h.DBHandler.Shutdown()
+	if err != nil {
+		h.errlog.Fatalln(err)
+	}
+	if killSignal == os.Kill {
+		h.stdlog.Println("Service was killed")
+	} else {
+		h.stdlog.Println("Service was terminated by system signal")
+	}
+	h.stdlog.Println("Gracefully closed")
 
 	return
 }

@@ -98,3 +98,8 @@ func (db *MySQL) Insert(table string, columns []string, values []interface{}) (l
 
 	return uint64(l), err
 }
+
+// Close flushes data and closes files
+func (db *MySQL) Close() (err error) {
+	return
+}

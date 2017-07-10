@@ -94,3 +94,8 @@ func (db *Postgres) Insert(table string, columns []string, values []interface{})
 
 	return
 }
+
+// Close flushes data and closes files
+func (db *Postgres) Close() (err error) {
+	return
+}

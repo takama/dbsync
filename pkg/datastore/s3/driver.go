@@ -46,3 +46,8 @@ func (db *S3) Update(table string, columns []string, values []interface{}) (coun
 func (db *S3) Insert(table string, columns []string, values []interface{}) (last uint64, err error) {
 	return 0, ErrUnsupported
 }
+
+// Close flushes data and closes files
+func (db *S3) Close() (err error) {
+	return
+}
