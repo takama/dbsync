@@ -23,6 +23,7 @@ import (
 type DBHandler interface {
 	Run() error
 	Report() []Status
+	Shutdown() error
 }
 
 // Status contains detailed sync information
@@ -44,11 +45,13 @@ type sqlReplication interface {
 	GetLimitedAfterID(table string, after, limit uint64) (*sql.Rows, error)
 	Update(table string, columns []string, values []interface{}) (count uint64, err error)
 	Insert(table string, columns []string, values []interface{}) (lastID uint64, err error)
+	Close() error
 }
 
 type fileReplication interface {
 	LastID(bucket string) (uint64, error)
 	AddFromSQL(bucket string, columns []string, values []interface{}) (lastID uint64, err error)
+	Close() error
 }
 
 // DBBundle contains drivers/tables information
@@ -270,6 +273,23 @@ func (dbb *DBBundle) Report() []Status {
 		status[key].Duration = time.Now().Sub(value.Changed).String()
 	}
 	return status
+}
+
+// Shutdown implements interface that makes graceful shutdown
+func (dbb *DBBundle) Shutdown() error {
+	if dbb.dstFileDriver != nil {
+		err := dbb.dstFileDriver.Close()
+		if err != nil {
+			return err
+		}
+	}
+	if dbb.dstSQLDriver != nil {
+		err := dbb.dstSQLDriver.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (dbb *DBBundle) exists(table string) bool {
@@ -585,6 +605,13 @@ func (dbb *DBBundle) fetchSQLHandler(intoFile bool, insertRows uint64) {
 					if err != nil {
 						dbb.errlog.Println("Close - Table:", table, err)
 						errors++
+					}
+					if intoFile {
+						err = dbb.dstFileDriver.Close()
+						if err != nil {
+							dbb.errlog.Println("Close files:", table, err)
+							errors++
+						}
 					}
 				}
 				if dstID >= srcID {

@@ -7,13 +7,8 @@ import (
 )
 
 func main() {
-	srv, err := server.Run()
+	err := server.Run()
 	if err != nil {
 		log.Fatal("[SETUP:ERROR] ", err)
-	}
-
-	err = srv.ListenAndServe()
-	if err != nil {
-		log.Fatal("Could not listen: ", err)
 	}
 }

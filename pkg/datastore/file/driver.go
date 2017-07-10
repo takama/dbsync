@@ -23,6 +23,19 @@ type File struct {
 	name    mapping.Fields
 	header  mapping.Fields
 	columns mapping.Fields
+
+	stream  map[string]fileStream
+	lastIDs map[string]idSpec
+}
+
+type fileStream struct {
+	handle *os.File
+	writer *bufio.Writer
+}
+
+type idSpec struct {
+	ID uint64
+	AT string
 }
 
 // ErrUnsupported declares error for unsupported methods
@@ -43,6 +56,8 @@ func New(
 		name:    name,
 		header:  header,
 		columns: columns,
+		stream:  make(map[string]fileStream),
+		lastIDs: make(map[string]idSpec),
 	}
 	err = db.checkDatastorePath()
 	return
@@ -50,7 +65,16 @@ func New(
 
 // LastID implements interface for getting last ID in datastore bucket
 func (db *File) LastID(bucket string) (id uint64, err error) {
-	return db.lastID(bucket)
+	is, ok := db.lastIDs[bucket]
+	if ok {
+		return is.ID, nil
+	}
+	id, err = db.lastID(bucket)
+	if err != nil {
+		return
+	}
+	db.lastIDs[bucket] = idSpec{ID: id}
+	return
 }
 
 // AddFromSQL implements interface for inserting data from SQL into bucket
@@ -137,11 +161,30 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 		}
 	}
 	// Save Last ID and AT
-	err = db.saveLastID(bucket, last, at)
-	if err != nil {
-		return 0, err
-	}
+	db.lastIDs[bucket] = idSpec{ID: last, AT: at}
 	return
+}
+
+// Close flushes data and closes files
+func (db *File) Close() (err error) {
+	for ndx, stream := range db.stream {
+		err = stream.writer.Flush()
+		if err != nil {
+			return err
+		}
+		err = stream.handle.Close()
+		if err != nil {
+			return err
+		}
+		delete(db.stream, ndx)
+	}
+	for bucket := range db.lastIDs {
+		err = db.saveLastID(bucket)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (db *File) bucketName(bucket string) string {
@@ -151,35 +194,42 @@ func (db *File) bucketName(bucket string) string {
 
 func (db *File) save(bucket, path, data string) error {
 	path = db.dataDir + string(os.PathSeparator) + db.bucketName(bucket) + string(os.PathSeparator) + path
-	dir := filepath.Dir(path)
-	_, err := os.Stat(dir)
-	if os.IsNotExist(err) {
-		if err := os.MkdirAll(dir, os.ModeDir|0755); err != nil {
+	stream, ok := db.stream[path]
+	if !ok {
+		dir := filepath.Dir(path)
+		_, err := os.Stat(dir)
+		if os.IsNotExist(err) {
+			if err := os.MkdirAll(dir, os.ModeDir|0755); err != nil {
+				return err
+			}
+		}
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
 			return err
 		}
+		stream = fileStream{
+			handle: file,
+			writer: bufio.NewWriter(file),
+		}
+		db.stream[path] = stream
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	_, err := stream.writer.WriteString(data)
 	if err != nil {
-		return err
+		stream.handle.Close()
+		delete(db.stream, path)
 	}
-	defer file.Close()
-	_, err = file.WriteString(data)
 	return err
 }
 
-func (db *File) saveLastID(bucket string, id uint64, at string) error {
+func (db *File) saveLastID(bucket string) error {
 	path := db.dataDir + string(os.PathSeparator) + db.bucketName(bucket) + string(os.PathSeparator) + "lastID"
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	data := struct {
-		ID uint64
-		AT string
-	}{ID: id, AT: at}
 	fileWriter := bufio.NewWriter(file)
-	err = json.NewEncoder(fileWriter).Encode(data)
+	err = json.NewEncoder(fileWriter).Encode(db.lastIDs[bucket])
 	if err == nil {
 		fileWriter.Flush()
 	}

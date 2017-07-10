@@ -161,6 +161,11 @@ func (db *B2) AddFromSQL(bucket string, columns []string, values []interface{}) 
 	return
 }
 
+// Close flushes data and closes files
+func (db *B2) Close() (err error) {
+	return
+}
+
 func (db *B2) getOrCreateBucket(bucket string) (bkt *blazer.Bucket, err error) {
 	buckets, err := db.Client.ListBuckets(db.ctx)
 	if err != nil {
