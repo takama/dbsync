@@ -225,10 +225,10 @@ func (dbb *DBBundle) Run() error {
 			}
 		} else {
 			if dbb.dstFileDriver != nil {
-				dbb.fetchSQLHandler(true, dbb.InsertRows)
+				dbb.fetchSQLHandler(true)
 			} else {
-				dbb.updateSQLToSQLHandler(dbb.UpdateRows)
-				dbb.fetchSQLHandler(false, dbb.InsertRows)
+				dbb.updateSQLToSQLHandler()
+				dbb.fetchSQLHandler(false)
 			}
 		}
 		// setup handlers
@@ -237,7 +237,7 @@ func (dbb *DBBundle) Run() error {
 			updateTicker := time.NewTicker(time.Duration(dbb.UpdatePeriod) * time.Second)
 			go func() {
 				for range updateTicker.C {
-					dbb.updateSQLToSQLHandler(dbb.UpdateRows)
+					dbb.updateSQLToSQLHandler()
 				}
 			}()
 		}
@@ -250,10 +250,10 @@ func (dbb *DBBundle) Run() error {
 					}
 				} else {
 					if dbb.dstFileDriver != nil {
-						dbb.fetchSQLHandler(true, dbb.InsertRows)
+						dbb.fetchSQLHandler(true)
 					} else {
-						dbb.updateSQLToSQLHandler(dbb.UpdateRows)
-						dbb.fetchSQLHandler(false, dbb.InsertRows)
+						dbb.updateSQLToSQLHandler()
+						dbb.fetchSQLHandler(false)
 					}
 				}
 			}
@@ -303,7 +303,7 @@ func (dbb *DBBundle) exists(table string) bool {
 	return alreadyExists
 }
 
-func (dbb *DBBundle) updateSQLToSQLHandler(updateRows uint64) {
+func (dbb *DBBundle) updateSQLToSQLHandler() {
 	dbb.mutex.Lock()
 	defer dbb.mutex.Unlock()
 	for _, table := range dbb.UpdateTables {
@@ -317,7 +317,7 @@ func (dbb *DBBundle) updateSQLToSQLHandler(updateRows uint64) {
 		dbb.report.mutex.Unlock()
 		var errors uint64
 		dstTableName := dbb.TablePrefix + table + dbb.TablePostfix
-		rows, err := dbb.dstSQLDriver.GetLimited(dstTableName, updateRows)
+		rows, err := dbb.dstSQLDriver.GetLimited(dstTableName, dbb.UpdateRows)
 		if err != nil {
 			if err != sql.ErrNoRows {
 				dbb.errlog.Println("GetLimited - Table:", dstTableName, err)
@@ -511,7 +511,7 @@ func (dbb *DBBundle) updateSQLToSQLHandler(updateRows uint64) {
 	}
 }
 
-func (dbb *DBBundle) fetchSQLHandler(intoFile bool, insertRows uint64) {
+func (dbb *DBBundle) fetchSQLHandler(intoFile bool) {
 	dbb.mutex.Lock()
 	defer dbb.mutex.Unlock()
 	for _, table := range dbb.InsertTables {
@@ -553,7 +553,7 @@ func (dbb *DBBundle) fetchSQLHandler(intoFile bool, insertRows uint64) {
 		dbb.report.mutex.Unlock()
 		if dstID < srcID {
 			for {
-				rows, err := dbb.srcSQLDriver.GetLimitedAfterID(table, dstID, insertRows)
+				rows, err := dbb.srcSQLDriver.GetLimitedAfterID(table, dstID, dbb.InsertRows)
 				if err != nil {
 					dbb.errlog.Println("GetLimitedAfterID - Table:", table, err)
 					errors++
