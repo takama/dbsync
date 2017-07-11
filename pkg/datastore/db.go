@@ -221,7 +221,7 @@ func (dbb *DBBundle) Run() error {
 	go func() {
 		if dbb.srcFileDriver != nil {
 			if dbb.dstFileDriver != nil {
-				dbb.syncFileToFileHandler(1)
+				dbb.syncFileToFileHandler()
 			}
 		} else {
 			if dbb.dstFileDriver != nil {
@@ -246,7 +246,7 @@ func (dbb *DBBundle) Run() error {
 			for range insertTicker.C {
 				if dbb.srcFileDriver != nil {
 					if dbb.dstFileDriver != nil {
-						dbb.syncFileToFileHandler(1)
+						dbb.syncFileToFileHandler()
 					}
 				} else {
 					if dbb.dstFileDriver != nil {
@@ -631,6 +631,6 @@ func (dbb *DBBundle) fetchSQLHandler(intoFile bool) {
 	}
 }
 
-func (dbb *DBBundle) syncFileToFileHandler(syncFiles uint64) {
+func (dbb *DBBundle) syncFileToFileHandler() {
 
 }
