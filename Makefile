@@ -164,6 +164,10 @@ run: stop container
 HAS_RUNNED := $(shell docker ps | grep ${CONTAINER_NAME})
 HAS_EXITED := $(shell docker ps -a | grep ${CONTAINER_NAME})
 
+.PHONY: logs
+logs:
+	docker logs ${CONTAINER_NAME}
+
 .PHONY: stop
 stop:
 ifdef HAS_RUNNED
