@@ -88,6 +88,7 @@ type DBBundle struct {
 	SrcFileBucket      string         `split_words:"true"`
 	SrcFileID          string         `split_words:"true"`
 	SrcFileTopics      []string       `split_words:"true"`
+	SrcFileMatch       string         `split_words:"true"`
 	SrcFileExclude     mapping.Fields `split_words:"true"`
 	SrcFileSpec        mapping.Fields `split_words:"true"`
 	SrcFilePath        mapping.Fields `split_words:"true"`
@@ -109,6 +110,7 @@ type DBBundle struct {
 	DstFileBucket      string         `split_words:"true"`
 	DstFileID          string         `split_words:"true"`
 	DstFileTopics      []string       `split_words:"true"`
+	DstFileMatch       string         `split_words:"true"`
 	DstFileExclude     mapping.Fields `split_words:"true"`
 	DstFileSpec        mapping.Fields `split_words:"true"`
 	DstFilePath        mapping.Fields `split_words:"true"`
@@ -195,8 +197,9 @@ func New() (*DBBundle, error) {
 		bundle.srcFileDriver, err = file.New(
 			bundle.FileDataDir, bundle.SrcFileBucket, bundle.SrcFileID,
 			bundle.SrcFileJSON, bundle.SrcFileCompression, bundle.SrcFileTopics,
-			bundle.SrcFileExclude, bundle.SrcFileSpec, bundle.SrcFilePath,
-			bundle.SrcFileName, bundle.SrcFileHeader, bundle.SrcFileColumns,
+			bundle.SrcFileMatch, bundle.SrcFileExclude, bundle.SrcFileSpec,
+			bundle.SrcFilePath, bundle.SrcFileName, bundle.SrcFileHeader,
+			bundle.SrcFileColumns,
 		)
 		if err != nil {
 			return bundle, err
@@ -235,8 +238,9 @@ func New() (*DBBundle, error) {
 		bundle.dstFileDriver, err = file.New(
 			bundle.FileDataDir, bundle.DstFileBucket, bundle.DstFileID,
 			bundle.DstFileJSON, bundle.DstFileCompression, bundle.DstFileTopics,
-			bundle.DstFileExclude, bundle.DstFileSpec, bundle.DstFilePath,
-			bundle.DstFileName, bundle.DstFileHeader, bundle.DstFileColumns,
+			bundle.DstFileMatch, bundle.DstFileExclude, bundle.DstFileSpec,
+			bundle.DstFilePath, bundle.DstFileName, bundle.DstFileHeader,
+			bundle.DstFileColumns,
 		)
 		if err != nil {
 			return bundle, err

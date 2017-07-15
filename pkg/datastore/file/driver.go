@@ -22,6 +22,7 @@ type File struct {
 	bucket      string
 	id          string
 	topics      []string
+	match       string
 	exclude     mapping.Fields
 	spec        mapping.Fields
 	path        mapping.Fields
@@ -50,7 +51,7 @@ var ErrEmptyID = errors.New("Invalid ID data")
 // New creates file driver
 func New(
 	dataDir, bucket, id string, json, compression bool, topics []string,
-	exclude, spec, path, name, header, columns mapping.Fields,
+	match string, exclude, spec, path, name, header, columns mapping.Fields,
 ) (db *File, err error) {
 	db = &File{
 		dataDir:     dataDir,
@@ -59,6 +60,7 @@ func New(
 		bucket:      bucket,
 		id:          id,
 		topics:      topics,
+		match:       match,
 		exclude:     exclude,
 		spec:        spec,
 		path:        path,
@@ -231,6 +233,9 @@ func (db *File) GetFiles(path string, fileCount int) (collection map[string]bind
 		func(path string, info os.FileInfo, err error) error {
 			// really, we should open every file there?
 			if err == nil && !info.IsDir() {
+				if match, err := filepath.Match(db.match, filepath.Base(path)); err == nil && !match {
+					return nil
+				}
 				name := strings.TrimPrefix(path, db.dataDir+string(os.PathSeparator)+db.bucket+string(os.PathSeparator))
 				for _, ex := range excludes {
 					if strings.HasSuffix(name, ex) {
