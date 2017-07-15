@@ -2,9 +2,11 @@ package file
 
 import (
 	"bufio"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -268,6 +270,39 @@ func (db *File) GetFiles(path string, fileCount int) (collection map[string]bind
 func (db *File) PutFile(path string, stream binding.Stream) error {
 	// There will be implementation
 	if stream.Handle != nil {
+		path = db.dataDir + string(os.PathSeparator) + db.bucket + string(os.PathSeparator) + path
+		dir := filepath.Dir(path)
+		_, err := os.Stat(dir)
+		if os.IsNotExist(err) {
+			if err := os.MkdirAll(dir, os.ModeDir|0755); err != nil {
+				return err
+			}
+		}
+		if db.compression {
+			path = path + ".gz"
+		}
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		if db.compression {
+			w := gzip.NewWriter(file)
+			if _, err := io.Copy(w, stream.Reader); err != nil {
+				return err
+			}
+			if err := w.Close(); err != nil {
+				return err
+			}
+		} else {
+			w := bufio.NewWriter(file)
+			if _, err := io.Copy(w, stream.Reader); err != nil {
+				return err
+			}
+			if err := w.Flush(); err != nil {
+				return err
+			}
+		}
 		return stream.Handle.Close()
 	}
 
