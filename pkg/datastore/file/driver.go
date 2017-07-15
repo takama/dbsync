@@ -21,6 +21,7 @@ type File struct {
 	dataDir     string
 	json        bool
 	compression bool
+	extension   string
 	bucket      string
 	id          string
 	topics      []string
@@ -53,12 +54,13 @@ var ErrEmptyID = errors.New("Invalid ID data")
 // New creates file driver
 func New(
 	dataDir, bucket, id string, json, compression bool, topics []string,
-	match string, exclude, spec, path, name, header, columns mapping.Fields,
+	extension, match string, exclude, spec, path, name, header, columns mapping.Fields,
 ) (db *File, err error) {
 	db = &File{
 		dataDir:     dataDir,
 		json:        json,
 		compression: compression,
+		extension:   extension,
 		bucket:      bucket,
 		id:          id,
 		topics:      topics,
@@ -134,6 +136,9 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 			}
 			path = path + mapping.Render(field, string(os.PathSeparator), "", false, false, columns, values)
 		}
+		if str := strings.Trim(db.extension, ". "); str != "" {
+			path = path + "." + str
+		}
 
 		// Generate header
 		data := "\n"
@@ -194,13 +199,23 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 // Close flushes data and closes files
 func (db *File) Close() (err error) {
 	for ndx, stream := range db.stream {
-		err = stream.Writer.Flush()
-		if err != nil {
-			return err
+		if stream.GZWriter != nil {
+			err = stream.GZWriter.Close()
+			if err != nil {
+				return err
+			}
 		}
-		err = stream.Handle.Close()
-		if err != nil {
-			return err
+		if stream.Writer != nil {
+			err = stream.Writer.Flush()
+			if err != nil {
+				return err
+			}
+		}
+		if stream.Handle != nil {
+			err = stream.Handle.Close()
+			if err != nil {
+				return err
+			}
 		}
 		delete(db.stream, ndx)
 	}
@@ -278,8 +293,8 @@ func (db *File) PutFile(path string, stream binding.Stream) error {
 				return err
 			}
 		}
-		if db.compression {
-			path = path + ".gz"
+		if str := strings.Trim(db.extension, ". "); str != "" {
+			path = path + "." + str
 		}
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 		if err != nil {
@@ -337,18 +352,33 @@ func (db *File) save(bucket, path, data string) error {
 		if err != nil {
 			return err
 		}
-		stream = binding.Stream{
-			Handle: file,
-			Writer: bufio.NewWriter(file),
+		if db.compression {
+			stream = binding.Stream{
+				Handle:   file,
+				GZWriter: gzip.NewWriter(file),
+			}
+		} else {
+			stream = binding.Stream{
+				Handle: file,
+				Writer: bufio.NewWriter(file),
+			}
 		}
 		db.stream[path] = stream
 	}
-	_, err := stream.Writer.WriteString(data)
-	if err != nil {
-		stream.Handle.Close()
-		delete(db.stream, path)
+	if db.compression {
+		_, err := stream.GZWriter.Write([]byte(data))
+		if err != nil {
+			stream.Handle.Close()
+			delete(db.stream, path)
+		}
+	} else {
+		_, err := stream.Writer.WriteString(data)
+		if err != nil {
+			stream.Handle.Close()
+			delete(db.stream, path)
+		}
 	}
-	return err
+	return nil
 }
 
 func (db *File) saveLastID(bucket string) error {
