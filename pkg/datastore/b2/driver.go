@@ -2,6 +2,7 @@ package b2
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	blazer "github.com/kurin/blazer/b2"
+	"github.com/takama/dbsync/pkg/datastore/binding"
 	"github.com/takama/dbsync/pkg/datastore/mapping"
 )
 
@@ -16,14 +18,18 @@ import (
 type B2 struct {
 	ctx context.Context
 	*blazer.Client
-	json    bool
-	id      string
-	topics  []string
-	spec    mapping.Fields
-	path    mapping.Fields
-	name    mapping.Fields
-	header  mapping.Fields
-	columns mapping.Fields
+	*blazer.Bucket
+	json        bool
+	compression bool
+	bucket      string
+	id          string
+	topics      []string
+	exclude     mapping.Fields
+	spec        mapping.Fields
+	path        mapping.Fields
+	name        mapping.Fields
+	header      mapping.Fields
+	columns     mapping.Fields
 }
 
 // ErrUnsupported declares error for unsupported methods
@@ -31,25 +37,35 @@ var ErrUnsupported = errors.New("Unsupported method for BackBlaze B2")
 
 // New creates B2 driver
 func New(
-	accountID, appKey, id string, json bool, topics []string,
-	spec, path, name, header, columns mapping.Fields,
+	accountID, appKey, bucket, id string, json, compression bool, topics []string,
+	exclude, spec, path, name, header, columns mapping.Fields,
 ) (db *B2, err error) {
 	db = &B2{
-		ctx:     context.Background(),
-		json:    json,
-		id:      id,
-		topics:  topics,
-		spec:    spec,
-		path:    path,
-		name:    name,
-		header:  header,
-		columns: columns,
+		ctx:         context.Background(),
+		json:        json,
+		compression: compression,
+		bucket:      bucket,
+		id:          id,
+		topics:      topics,
+		exclude:     exclude,
+		spec:        spec,
+		path:        path,
+		name:        name,
+		header:      header,
+		columns:     columns,
 	}
 	client, err := blazer.NewClient(db.ctx, accountID, appKey)
 	if err != nil {
 		return
 	}
 	db.Client = client
+	if bucket != "" {
+		bkt, err := db.getOrCreateBucket(bucket)
+		if err != nil {
+			return nil, err
+		}
+		db.Bucket = bkt
+	}
 	return
 }
 
@@ -166,6 +182,51 @@ func (db *B2) Close() (err error) {
 	return
 }
 
+// GetFiles should collect
+func (db *B2) GetFiles(path string, fileCount int) (collection map[string]binding.Stream, err error) {
+	err = ErrUnsupported
+	return
+}
+
+// PutFile uploads file to the datastore
+func (db *B2) PutFile(path string, stream binding.Stream) error {
+	if stream.Handle != nil {
+		defer stream.Handle.Close()
+		// Save data
+		if db.compression {
+			path = path + ".gz"
+		}
+		datafile := db.Bucket.Object(path)
+		w := datafile.NewWriter(db.ctx)
+		w.ConcurrentUploads = 5
+
+		if db.compression {
+			gz := gzip.NewWriter(w)
+			if _, err := io.Copy(gz, stream.Reader); err != nil {
+				w.Close()
+				return err
+			}
+			if err := gz.Flush(); err != nil {
+				w.Close()
+				return err
+			}
+		} else {
+			if _, err := io.Copy(w, stream.Reader); err != nil {
+				w.Close()
+				return err
+			}
+		}
+		return w.Close()
+	}
+
+	return nil
+}
+
+// Remove method removes file by path
+func (db *B2) Remove(path string) error {
+	return ErrUnsupported
+}
+
 func (db *B2) getOrCreateBucket(bucket string) (bkt *blazer.Bucket, err error) {
 	buckets, err := db.Client.ListBuckets(db.ctx)
 	if err != nil {
@@ -209,6 +270,9 @@ func (db *B2) getOrCreateLastID(bkt *blazer.Bucket) (id uint64, err error) {
 }
 
 func (db *B2) bucketName(bucket string) string {
+	if db.bucket != "" {
+		return db.bucket
+	}
 	r := strings.NewReplacer("-", "", "_", "", " ", "")
 	return r.Replace(bucket)
 }

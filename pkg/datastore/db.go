@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/takama/dbsync/pkg/datastore/b2"
+	"github.com/takama/dbsync/pkg/datastore/binding"
 	"github.com/takama/dbsync/pkg/datastore/file"
 	"github.com/takama/dbsync/pkg/datastore/mapping"
 	"github.com/takama/dbsync/pkg/datastore/mysql"
@@ -51,6 +52,9 @@ type sqlReplication interface {
 type fileReplication interface {
 	LastID(bucket string) (uint64, error)
 	AddFromSQL(bucket string, columns []string, values []interface{}) (lastID uint64, err error)
+	GetFiles(path string, fileCount int) (collection map[string]binding.Stream, err error)
+	PutFile(path string, stream binding.Stream) error
+	Remove(path string) error
 	Close() error
 }
 
@@ -76,6 +80,21 @@ type DBBundle struct {
 	SrcDbUsername string `split_words:"true"`
 	SrcDbPassword string `split_words:"true"`
 
+	SrcAccountID       string         `split_words:"true"`
+	SrcAppKey          string         `split_words:"true"`
+	SrcFileJSON        bool           `split_words:"true"`
+	SrcFileCompression bool           `split_words:"true"`
+	SrcFileRemove      bool           `split_words:"true"`
+	SrcFileBucket      string         `split_words:"true"`
+	SrcFileID          string         `split_words:"true"`
+	SrcFileTopics      []string       `split_words:"true"`
+	SrcFileExclude     mapping.Fields `split_words:"true"`
+	SrcFileSpec        mapping.Fields `split_words:"true"`
+	SrcFilePath        mapping.Fields `split_words:"true"`
+	SrcFileName        mapping.Fields `split_words:"true"`
+	SrcFileHeader      mapping.Fields `split_words:"true"`
+	SrcFileColumns     mapping.Fields `split_words:"true"`
+
 	DstDbDriver   string `split_words:"true" required:"true"`
 	DstDbHost     string `split_words:"true"`
 	DstDbPort     uint64 `split_words:"true"`
@@ -83,16 +102,19 @@ type DBBundle struct {
 	DstDbUsername string `split_words:"true"`
 	DstDbPassword string `split_words:"true"`
 
-	DstAccountID   string         `split_words:"true"`
-	DstAppKey      string         `split_words:"true"`
-	DstFileJSON    bool           `split_words:"true"`
-	DstFileID      string         `split_words:"true"`
-	DstFileTopics  []string       `split_words:"true"`
-	DstFileSpec    mapping.Fields `split_words:"true"`
-	DstFilePath    mapping.Fields `split_words:"true"`
-	DstFileName    mapping.Fields `split_words:"true"`
-	DstFileHeader  mapping.Fields `split_words:"true"`
-	DstFileColumns mapping.Fields `split_words:"true"`
+	DstAccountID       string         `split_words:"true"`
+	DstAppKey          string         `split_words:"true"`
+	DstFileJSON        bool           `split_words:"true"`
+	DstFileCompression bool           `split_words:"true"`
+	DstFileBucket      string         `split_words:"true"`
+	DstFileID          string         `split_words:"true"`
+	DstFileTopics      []string       `split_words:"true"`
+	DstFileExclude     mapping.Fields `split_words:"true"`
+	DstFileSpec        mapping.Fields `split_words:"true"`
+	DstFilePath        mapping.Fields `split_words:"true"`
+	DstFileName        mapping.Fields `split_words:"true"`
+	DstFileHeader      mapping.Fields `split_words:"true"`
+	DstFileColumns     mapping.Fields `split_words:"true"`
 
 	UpdateTables []string `split_words:"true"`
 	InsertTables []string `split_words:"true"`
@@ -104,6 +126,8 @@ type DBBundle struct {
 	InsertPeriod uint64 `split_words:"true" required:"true"`
 	UpdateRows   uint64 `split_words:"true" required:"true"`
 	InsertRows   uint64 `split_words:"true" required:"true"`
+
+	FileSyncCount int `split_words:"true"`
 
 	FileDataDir string `split_words:"true"`
 }
@@ -140,6 +164,12 @@ func New() (*DBBundle, error) {
 		}
 	}
 
+	for _, topic := range bundle.SrcFileTopics {
+		if !bundle.exists(topic) {
+			bundle.status = append(bundle.status, Status{Table: topic})
+		}
+	}
+
 	switch strings.ToLower(bundle.SrcDbDriver) {
 	case "b2":
 		return nil, b2.ErrUnsupported
@@ -161,13 +191,24 @@ func New() (*DBBundle, error) {
 		if err != nil {
 			return bundle, err
 		}
+	case "file":
+		bundle.srcFileDriver, err = file.New(
+			bundle.FileDataDir, bundle.SrcFileBucket, bundle.SrcFileID,
+			bundle.SrcFileJSON, bundle.SrcFileCompression, bundle.SrcFileTopics,
+			bundle.SrcFileExclude, bundle.SrcFileSpec, bundle.SrcFilePath,
+			bundle.SrcFileName, bundle.SrcFileHeader, bundle.SrcFileColumns,
+		)
+		if err != nil {
+			return bundle, err
+		}
 	}
 	switch strings.ToLower(bundle.DstDbDriver) {
 	case "b2":
 		bundle.dstFileDriver, err = b2.New(
-			bundle.DstAccountID, bundle.DstAppKey, bundle.DstFileID, bundle.DstFileJSON,
-			bundle.DstFileTopics, bundle.DstFileSpec, bundle.DstFilePath, bundle.DstFileName,
-			bundle.DstFileHeader, bundle.DstFileColumns,
+			bundle.DstAccountID, bundle.DstAppKey, bundle.DstFileBucket, bundle.DstFileID,
+			bundle.DstFileJSON, bundle.DstFileCompression, bundle.DstFileTopics,
+			bundle.DstFileExclude, bundle.DstFileSpec, bundle.DstFilePath,
+			bundle.DstFileName, bundle.DstFileHeader, bundle.DstFileColumns,
 		)
 		if err != nil {
 			return bundle, err
@@ -192,9 +233,10 @@ func New() (*DBBundle, error) {
 		}
 	case "file":
 		bundle.dstFileDriver, err = file.New(
-			bundle.FileDataDir, bundle.DstFileID, bundle.DstFileJSON,
-			bundle.DstFileTopics, bundle.DstFileSpec, bundle.DstFilePath, bundle.DstFileName,
-			bundle.DstFileHeader, bundle.DstFileColumns,
+			bundle.FileDataDir, bundle.DstFileBucket, bundle.DstFileID,
+			bundle.DstFileJSON, bundle.DstFileCompression, bundle.DstFileTopics,
+			bundle.DstFileExclude, bundle.DstFileSpec, bundle.DstFilePath,
+			bundle.DstFileName, bundle.DstFileHeader, bundle.DstFileColumns,
 		)
 		if err != nil {
 			return bundle, err
@@ -221,14 +263,14 @@ func (dbb *DBBundle) Run() error {
 	go func() {
 		if dbb.srcFileDriver != nil {
 			if dbb.dstFileDriver != nil {
-				dbb.syncFileToFileHandler(1)
+				dbb.syncFileToFileHandler()
 			}
 		} else {
 			if dbb.dstFileDriver != nil {
-				dbb.fetchSQLHandler(true, dbb.InsertRows)
+				dbb.fetchSQLHandler(true)
 			} else {
-				dbb.updateSQLToSQLHandler(dbb.UpdateRows)
-				dbb.fetchSQLHandler(false, dbb.InsertRows)
+				dbb.updateSQLToSQLHandler()
+				dbb.fetchSQLHandler(false)
 			}
 		}
 		// setup handlers
@@ -237,7 +279,7 @@ func (dbb *DBBundle) Run() error {
 			updateTicker := time.NewTicker(time.Duration(dbb.UpdatePeriod) * time.Second)
 			go func() {
 				for range updateTicker.C {
-					dbb.updateSQLToSQLHandler(dbb.UpdateRows)
+					dbb.updateSQLToSQLHandler()
 				}
 			}()
 		}
@@ -246,14 +288,14 @@ func (dbb *DBBundle) Run() error {
 			for range insertTicker.C {
 				if dbb.srcFileDriver != nil {
 					if dbb.dstFileDriver != nil {
-						dbb.syncFileToFileHandler(1)
+						dbb.syncFileToFileHandler()
 					}
 				} else {
 					if dbb.dstFileDriver != nil {
-						dbb.fetchSQLHandler(true, dbb.InsertRows)
+						dbb.fetchSQLHandler(true)
 					} else {
-						dbb.updateSQLToSQLHandler(dbb.UpdateRows)
-						dbb.fetchSQLHandler(false, dbb.InsertRows)
+						dbb.updateSQLToSQLHandler()
+						dbb.fetchSQLHandler(false)
 					}
 				}
 			}
@@ -303,7 +345,7 @@ func (dbb *DBBundle) exists(table string) bool {
 	return alreadyExists
 }
 
-func (dbb *DBBundle) updateSQLToSQLHandler(updateRows uint64) {
+func (dbb *DBBundle) updateSQLToSQLHandler() {
 	dbb.mutex.Lock()
 	defer dbb.mutex.Unlock()
 	for _, table := range dbb.UpdateTables {
@@ -317,7 +359,7 @@ func (dbb *DBBundle) updateSQLToSQLHandler(updateRows uint64) {
 		dbb.report.mutex.Unlock()
 		var errors uint64
 		dstTableName := dbb.TablePrefix + table + dbb.TablePostfix
-		rows, err := dbb.dstSQLDriver.GetLimited(dstTableName, updateRows)
+		rows, err := dbb.dstSQLDriver.GetLimited(dstTableName, dbb.UpdateRows)
 		if err != nil {
 			if err != sql.ErrNoRows {
 				dbb.errlog.Println("GetLimited - Table:", dstTableName, err)
@@ -511,7 +553,7 @@ func (dbb *DBBundle) updateSQLToSQLHandler(updateRows uint64) {
 	}
 }
 
-func (dbb *DBBundle) fetchSQLHandler(intoFile bool, insertRows uint64) {
+func (dbb *DBBundle) fetchSQLHandler(intoFile bool) {
 	dbb.mutex.Lock()
 	defer dbb.mutex.Unlock()
 	for _, table := range dbb.InsertTables {
@@ -553,7 +595,7 @@ func (dbb *DBBundle) fetchSQLHandler(intoFile bool, insertRows uint64) {
 		dbb.report.mutex.Unlock()
 		if dstID < srcID {
 			for {
-				rows, err := dbb.srcSQLDriver.GetLimitedAfterID(table, dstID, insertRows)
+				rows, err := dbb.srcSQLDriver.GetLimitedAfterID(table, dstID, dbb.InsertRows)
 				if err != nil {
 					dbb.errlog.Println("GetLimitedAfterID - Table:", table, err)
 					errors++
@@ -631,6 +673,56 @@ func (dbb *DBBundle) fetchSQLHandler(intoFile bool, insertRows uint64) {
 	}
 }
 
-func (dbb *DBBundle) syncFileToFileHandler(syncFiles uint64) {
-
+func (dbb *DBBundle) syncFileToFileHandler() {
+	// scan specified directories (topics)
+	root := dbb.FileDataDir + string(os.PathSeparator) + dbb.SrcFileBucket + string(os.PathSeparator)
+	for _, topic := range dbb.SrcFileTopics {
+		dbb.report.mutex.Lock()
+		for key, status := range dbb.status {
+			if status.Table == topic {
+				dbb.status[key].Changed = time.Now()
+				dbb.status[key].Running = true
+			}
+		}
+		dbb.report.mutex.Unlock()
+		var errors uint64
+		files, err := dbb.srcFileDriver.GetFiles(root+topic, dbb.FileSyncCount)
+		if err != nil {
+			dbb.errlog.Println(err)
+			errors++
+		}
+		for name, stream := range files {
+			dbb.stdlog.Println("Syncing of", name)
+			err := dbb.dstFileDriver.PutFile(name, stream)
+			if err != nil {
+				dbb.errlog.Println(err)
+				errors++
+			} else {
+				dbb.report.mutex.Lock()
+				for key, status := range dbb.status {
+					if status.Table == topic {
+						dbb.status[key].Inserted++
+					}
+				}
+				dbb.report.mutex.Unlock()
+			}
+			if dbb.SrcFileRemove && err == nil {
+				err := dbb.srcFileDriver.Remove(stream.Handle.Name())
+				if err != nil {
+					dbb.errlog.Println(err)
+					errors++
+				}
+			}
+		}
+		dbb.report.mutex.Lock()
+		for key, status := range dbb.status {
+			if status.Table == topic {
+				dbb.status[key].Errors += errors
+				dbb.status[key].Changed = time.Now()
+				dbb.status[key].Running = false
+			}
+		}
+		dbb.report.mutex.Unlock()
+	}
+	dbb.stdlog.Println("Syncing done")
 }

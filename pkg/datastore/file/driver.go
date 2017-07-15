@@ -4,33 +4,33 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/takama/dbsync/pkg/datastore/binding"
 	"github.com/takama/dbsync/pkg/datastore/mapping"
 )
 
 // File driver
 type File struct {
-	dataDir string
-	json    bool
-	id      string
-	topics  []string
-	spec    mapping.Fields
-	path    mapping.Fields
-	name    mapping.Fields
-	header  mapping.Fields
-	columns mapping.Fields
+	dataDir     string
+	json        bool
+	compression bool
+	bucket      string
+	id          string
+	topics      []string
+	exclude     mapping.Fields
+	spec        mapping.Fields
+	path        mapping.Fields
+	name        mapping.Fields
+	header      mapping.Fields
+	columns     mapping.Fields
 
-	stream  map[string]fileStream
+	stream  map[string]binding.Stream
 	lastIDs map[string]idSpec
-}
-
-type fileStream struct {
-	handle *os.File
-	writer *bufio.Writer
 }
 
 type idSpec struct {
@@ -41,23 +41,32 @@ type idSpec struct {
 // ErrUnsupported declares error for unsupported methods
 var ErrUnsupported = errors.New("Unsupported method for file syncing")
 
+// ErrInvalidPath declares error for invalid path part
+var ErrInvalidPath = errors.New("Invalid path data")
+
+// ErrEmptyID declares error for invalid ID
+var ErrEmptyID = errors.New("Invalid ID data")
+
 // New creates file driver
 func New(
-	dataDir, id string, json bool, topics []string,
-	spec, path, name, header, columns mapping.Fields,
+	dataDir, bucket, id string, json, compression bool, topics []string,
+	exclude, spec, path, name, header, columns mapping.Fields,
 ) (db *File, err error) {
 	db = &File{
-		dataDir: dataDir,
-		json:    json,
-		id:      id,
-		topics:  topics,
-		spec:    spec,
-		path:    path,
-		name:    name,
-		header:  header,
-		columns: columns,
-		stream:  make(map[string]fileStream),
-		lastIDs: make(map[string]idSpec),
+		dataDir:     dataDir,
+		json:        json,
+		compression: compression,
+		bucket:      bucket,
+		id:          id,
+		topics:      topics,
+		exclude:     exclude,
+		spec:        spec,
+		path:        path,
+		name:        name,
+		header:      header,
+		columns:     columns,
+		stream:      make(map[string]binding.Stream),
+		lastIDs:     make(map[string]idSpec),
 	}
 	err = db.checkDatastorePath()
 	return
@@ -69,11 +78,11 @@ func (db *File) LastID(bucket string) (id uint64, err error) {
 	if ok {
 		return is.ID, nil
 	}
-	id, err = db.lastID(bucket)
+	id, at, err := db.lastID(bucket)
 	if err != nil {
 		return
 	}
-	db.lastIDs[bucket] = idSpec{ID: id}
+	db.lastIDs[bucket] = idSpec{ID: id, AT: at}
 	return
 }
 
@@ -87,7 +96,16 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 				if err != nil {
 					return
 				}
+				if last == 0 {
+					return last, ErrEmptyID
+				}
 			}
+		}
+	}
+	// Check filters
+	for _, field := range db.exclude {
+		if field.Topic == mapping.Render(field, "", "", false, false, columns, values) {
+			return
 		}
 	}
 	for _, topic := range db.topics {
@@ -98,7 +116,11 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 			if field.Topic != "" && field.Topic != topic {
 				continue
 			}
-			path = path + mapping.Render(field, string(os.PathSeparator), "", false, false, columns, values)
+			part := mapping.Render(field, string(os.PathSeparator), "", false, false, columns, values)
+			if part == string(os.PathSeparator) {
+				return last, ErrInvalidPath
+			}
+			path = path + part
 		}
 
 		// Generate name
@@ -148,7 +170,7 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 		// Save data
 		err = db.save(bucket, path, data)
 		if err != nil {
-			return 0, err
+			return
 		}
 	}
 
@@ -168,11 +190,11 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 // Close flushes data and closes files
 func (db *File) Close() (err error) {
 	for ndx, stream := range db.stream {
-		err = stream.writer.Flush()
+		err = stream.Writer.Flush()
 		if err != nil {
 			return err
 		}
-		err = stream.handle.Close()
+		err = stream.Handle.Close()
 		if err != nil {
 			return err
 		}
@@ -187,7 +209,75 @@ func (db *File) Close() (err error) {
 	return nil
 }
 
+// GetFiles should collect
+func (db *File) GetFiles(path string, fileCount int) (collection map[string]binding.Stream, err error) {
+	id, at, err := db.lastID(db.bucket)
+	if err != nil {
+		return
+	}
+	collection = make(map[string]binding.Stream)
+	var excludes []string
+	var errSkip = fmt.Errorf("Skip over files")
+	for _, f := range db.exclude {
+		if strings.ToLower(f.Name) == "id" {
+			excludes = append(excludes, fmt.Sprintf(f.Format, id))
+		}
+		if strings.ToLower(f.Name) == "at" {
+			excludes = append(excludes, fmt.Sprintf(f.Format, at))
+		}
+	}
+	err = filepath.Walk(
+		path,
+		func(path string, info os.FileInfo, err error) error {
+			// really, we should open every file there?
+			if err == nil && !info.IsDir() {
+				name := strings.TrimPrefix(path, db.dataDir+string(os.PathSeparator)+db.bucket+string(os.PathSeparator))
+				for _, ex := range excludes {
+					if strings.HasSuffix(name, ex) {
+						return nil
+					}
+				}
+				file, err := os.OpenFile(path, os.O_RDONLY, 0644)
+				if err != nil {
+					return err
+				}
+				collection[name] = binding.Stream{
+					Handle: file,
+					Reader: bufio.NewReader(file),
+				}
+				if len(collection) >= fileCount {
+					return errSkip
+				}
+			}
+			return nil
+		},
+	)
+	if err == errSkip {
+		return collection, nil
+	}
+
+	return
+}
+
+// PutFile uploads file to the datastore
+func (db *File) PutFile(path string, stream binding.Stream) error {
+	// There will be implementation
+	if stream.Handle != nil {
+		return stream.Handle.Close()
+	}
+
+	return nil
+}
+
+// Remove method removes file by path
+func (db *File) Remove(path string) error {
+	return os.Remove(path)
+}
+
 func (db *File) bucketName(bucket string) string {
+	if db.bucket != "" {
+		return db.bucket
+	}
 	r := strings.NewReplacer("-", "", "_", "", " ", "")
 	return r.Replace(bucket)
 }
@@ -207,15 +297,15 @@ func (db *File) save(bucket, path, data string) error {
 		if err != nil {
 			return err
 		}
-		stream = fileStream{
-			handle: file,
-			writer: bufio.NewWriter(file),
+		stream = binding.Stream{
+			Handle: file,
+			Writer: bufio.NewWriter(file),
 		}
 		db.stream[path] = stream
 	}
-	_, err := stream.writer.WriteString(data)
+	_, err := stream.Writer.WriteString(data)
 	if err != nil {
-		stream.handle.Close()
+		stream.Handle.Close()
 		delete(db.stream, path)
 	}
 	return err
@@ -236,23 +326,23 @@ func (db *File) saveLastID(bucket string) error {
 	return err
 }
 
-func (db *File) lastID(bucket string) (id uint64, err error) {
+func (db *File) lastID(bucket string) (id uint64, at string, err error) {
 	path := db.dataDir + string(os.PathSeparator) + db.bucketName(bucket)
 	_, err = os.Stat(path)
 	if os.IsNotExist(err) {
 		if err := os.Mkdir(path, os.ModeDir|0755); err != nil {
-			return 0, err
+			return 0, "", err
 		}
 	}
 	idPath := path + string(os.PathSeparator) + "lastID"
 	_, err = os.Stat(idPath)
 	// if file does not exist, return "0" without error
 	if os.IsNotExist(err) {
-		return 0, nil
+		return 0, "", nil
 	}
 	file, err := os.OpenFile(idPath, os.O_RDONLY, 0644)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	defer file.Close()
 	var data struct {
@@ -261,9 +351,9 @@ func (db *File) lastID(bucket string) (id uint64, err error) {
 	}
 	err = json.NewDecoder(bufio.NewReader(file)).Decode(&data)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
-	return data.ID, nil
+	return data.ID, data.AT, nil
 }
 
 // checkDatastorePath - checks if not exists datastore file try to create it
