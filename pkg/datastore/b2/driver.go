@@ -21,6 +21,7 @@ type B2 struct {
 	*blazer.Bucket
 	json        bool
 	compression bool
+	extension   string
 	bucket      string
 	id          string
 	topics      []string
@@ -38,12 +39,13 @@ var ErrUnsupported = errors.New("Unsupported method for BackBlaze B2")
 // New creates B2 driver
 func New(
 	accountID, appKey, bucket, id string, json, compression bool, topics []string,
-	exclude, spec, path, name, header, columns mapping.Fields,
+	extension string, exclude, spec, path, name, header, columns mapping.Fields,
 ) (db *B2, err error) {
 	db = &B2{
 		ctx:         context.Background(),
 		json:        json,
 		compression: compression,
+		extension:   extension,
 		bucket:      bucket,
 		id:          id,
 		topics:      topics,
@@ -121,6 +123,9 @@ func (db *B2) AddFromSQL(bucket string, columns []string, values []interface{}) 
 			}
 			path = path + mapping.Render(field, "/", "", false, false, columns, values)
 		}
+		if str := strings.Trim(db.extension, ". "); str != "" {
+			path = path + "." + str
+		}
 
 		// Generate header
 		data := "\n"
@@ -193,8 +198,8 @@ func (db *B2) PutFile(path string, stream binding.Stream) error {
 	if stream.Handle != nil {
 		defer stream.Handle.Close()
 		// Save data
-		if db.compression {
-			path = path + ".gz"
+		if str := strings.Trim(db.extension, ". "); str != "" {
+			path = path + "." + str
 		}
 		datafile := db.Bucket.Object(path)
 		w := datafile.NewWriter(db.ctx)

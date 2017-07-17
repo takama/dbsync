@@ -61,6 +61,8 @@ type fileReplication interface {
 // DBBundle contains drivers/tables information
 type DBBundle struct {
 	mutex         sync.RWMutex
+	done          chan bool
+	wg            *sync.WaitGroup
 	stdlog        *log.Logger
 	errlog        *log.Logger
 	status        []Status
@@ -85,9 +87,11 @@ type DBBundle struct {
 	SrcFileJSON        bool           `split_words:"true"`
 	SrcFileCompression bool           `split_words:"true"`
 	SrcFileRemove      bool           `split_words:"true"`
+	SrcFileExtension   string         `split_words:"true"`
 	SrcFileBucket      string         `split_words:"true"`
 	SrcFileID          string         `split_words:"true"`
 	SrcFileTopics      []string       `split_words:"true"`
+	SrcFileMatch       string         `split_words:"true"`
 	SrcFileExclude     mapping.Fields `split_words:"true"`
 	SrcFileSpec        mapping.Fields `split_words:"true"`
 	SrcFilePath        mapping.Fields `split_words:"true"`
@@ -106,9 +110,11 @@ type DBBundle struct {
 	DstAppKey          string         `split_words:"true"`
 	DstFileJSON        bool           `split_words:"true"`
 	DstFileCompression bool           `split_words:"true"`
+	DstFileExtension   string         `split_words:"true"`
 	DstFileBucket      string         `split_words:"true"`
 	DstFileID          string         `split_words:"true"`
 	DstFileTopics      []string       `split_words:"true"`
+	DstFileMatch       string         `split_words:"true"`
 	DstFileExclude     mapping.Fields `split_words:"true"`
 	DstFileSpec        mapping.Fields `split_words:"true"`
 	DstFilePath        mapping.Fields `split_words:"true"`
@@ -145,6 +151,8 @@ var ErrNothingToSyncDestination = errors.New("Nothing to sync, please specify de
 func New() (*DBBundle, error) {
 
 	bundle := &DBBundle{
+		done:   make(chan bool),
+		wg:     &sync.WaitGroup{},
 		stdlog: log.New(os.Stdout, "[DBSYNC:INFO]: ", log.LstdFlags),
 		errlog: log.New(os.Stderr, "[DBSYNC:ERROR]: ", log.LstdFlags),
 	}
@@ -195,8 +203,9 @@ func New() (*DBBundle, error) {
 		bundle.srcFileDriver, err = file.New(
 			bundle.FileDataDir, bundle.SrcFileBucket, bundle.SrcFileID,
 			bundle.SrcFileJSON, bundle.SrcFileCompression, bundle.SrcFileTopics,
-			bundle.SrcFileExclude, bundle.SrcFileSpec, bundle.SrcFilePath,
-			bundle.SrcFileName, bundle.SrcFileHeader, bundle.SrcFileColumns,
+			bundle.SrcFileExtension, bundle.SrcFileMatch, bundle.SrcFileExclude,
+			bundle.SrcFileSpec, bundle.SrcFilePath, bundle.SrcFileName,
+			bundle.SrcFileHeader, bundle.SrcFileColumns,
 		)
 		if err != nil {
 			return bundle, err
@@ -207,7 +216,7 @@ func New() (*DBBundle, error) {
 		bundle.dstFileDriver, err = b2.New(
 			bundle.DstAccountID, bundle.DstAppKey, bundle.DstFileBucket, bundle.DstFileID,
 			bundle.DstFileJSON, bundle.DstFileCompression, bundle.DstFileTopics,
-			bundle.DstFileExclude, bundle.DstFileSpec, bundle.DstFilePath,
+			bundle.DstFileExtension, bundle.DstFileExclude, bundle.DstFileSpec, bundle.DstFilePath,
 			bundle.DstFileName, bundle.DstFileHeader, bundle.DstFileColumns,
 		)
 		if err != nil {
@@ -235,8 +244,9 @@ func New() (*DBBundle, error) {
 		bundle.dstFileDriver, err = file.New(
 			bundle.FileDataDir, bundle.DstFileBucket, bundle.DstFileID,
 			bundle.DstFileJSON, bundle.DstFileCompression, bundle.DstFileTopics,
-			bundle.DstFileExclude, bundle.DstFileSpec, bundle.DstFilePath,
-			bundle.DstFileName, bundle.DstFileHeader, bundle.DstFileColumns,
+			bundle.DstFileExtension, bundle.DstFileMatch, bundle.DstFileExclude,
+			bundle.DstFileSpec, bundle.DstFilePath, bundle.DstFileName,
+			bundle.DstFileHeader, bundle.DstFileColumns,
 		)
 		if err != nil {
 			return bundle, err
@@ -319,6 +329,8 @@ func (dbb *DBBundle) Report() []Status {
 
 // Shutdown implements interface that makes graceful shutdown
 func (dbb *DBBundle) Shutdown() error {
+	close(dbb.done)
+	dbb.wg.Wait()
 	if dbb.dstFileDriver != nil {
 		err := dbb.dstFileDriver.Close()
 		if err != nil {
@@ -346,8 +358,12 @@ func (dbb *DBBundle) exists(table string) bool {
 }
 
 func (dbb *DBBundle) updateSQLToSQLHandler() {
+	dbb.wg.Add(1)
 	dbb.mutex.Lock()
-	defer dbb.mutex.Unlock()
+	defer func() {
+		dbb.wg.Done()
+		dbb.mutex.Unlock()
+	}()
 	for _, table := range dbb.UpdateTables {
 		dbb.report.mutex.Lock()
 		for key, status := range dbb.status {
@@ -539,6 +555,12 @@ func (dbb *DBBundle) updateSQLToSQLHandler() {
 						}
 					}
 				}
+				select {
+				case <-dbb.done:
+					dbb.stdlog.Println("SQL updating gracefully done")
+					return
+				default:
+				}
 			}
 		}
 		dbb.report.mutex.Lock()
@@ -554,8 +576,12 @@ func (dbb *DBBundle) updateSQLToSQLHandler() {
 }
 
 func (dbb *DBBundle) fetchSQLHandler(intoFile bool) {
+	dbb.wg.Add(1)
 	dbb.mutex.Lock()
-	defer dbb.mutex.Unlock()
+	defer func() {
+		dbb.wg.Done()
+		dbb.mutex.Unlock()
+	}()
 	for _, table := range dbb.InsertTables {
 		dbb.report.mutex.Lock()
 		for key, status := range dbb.status {
@@ -656,6 +682,12 @@ func (dbb *DBBundle) fetchSQLHandler(intoFile bool) {
 						}
 					}
 				}
+				select {
+				case <-dbb.done:
+					dbb.stdlog.Println("SQL fetching gracefully done")
+					return
+				default:
+				}
 				if dstID >= srcID {
 					break
 				}
@@ -674,6 +706,12 @@ func (dbb *DBBundle) fetchSQLHandler(intoFile bool) {
 }
 
 func (dbb *DBBundle) syncFileToFileHandler() {
+	dbb.wg.Add(1)
+	dbb.mutex.Lock()
+	defer func() {
+		dbb.wg.Done()
+		dbb.mutex.Unlock()
+	}()
 	// scan specified directories (topics)
 	root := dbb.FileDataDir + string(os.PathSeparator) + dbb.SrcFileBucket + string(os.PathSeparator)
 	for _, topic := range dbb.SrcFileTopics {
@@ -692,6 +730,12 @@ func (dbb *DBBundle) syncFileToFileHandler() {
 			errors++
 		}
 		for name, stream := range files {
+			select {
+			case <-dbb.done:
+				dbb.stdlog.Println("Syncing gracefully done")
+				return
+			default:
+			}
 			dbb.stdlog.Println("Syncing of", name)
 			err := dbb.dstFileDriver.PutFile(name, stream)
 			if err != nil {
