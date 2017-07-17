@@ -3,7 +3,7 @@ BUILDTAGS=
 # Use the 0.0.0 tag for testing, it shouldn't clobber any release builds
 APP?=dbsync
 USERSPACE?=takama
-RELEASE?=0.2.0
+RELEASE?=0.2.1
 PROJECT?=github.com/${USERSPACE}/${APP}
 HELM_REPO?=https://${USERSPACE}.github.io/${APP}
 GOOS?=linux
@@ -113,6 +113,7 @@ run: stop container
 		-e "DBSYNC_UPDATE_TABLES=${DBSYNC_UPDATE_TABLES}" \
 		-e "DBSYNC_INSERT_TABLES=${DBSYNC_INSERT_TABLES}" \
 		-e "DBSYNC_FILE_SYNC_COUNT=${DBSYNC_FILE_SYNC_COUNT}" \
+		-e "DBSYNC_FILE_DATA_DIR=${DBSYNC_FILE_DATA_DIR}" \
 		-e "DBSYNC_SRC_DB_DRIVER=${DBSYNC_SRC_DB_DRIVER}" \
 		-e "DBSYNC_SRC_DB_HOST=${DBSYNC_SRC_DB_HOST}" \
 		-e "DBSYNC_SRC_DB_PORT=${DBSYNC_SRC_DB_PORT}" \
