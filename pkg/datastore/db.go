@@ -70,9 +70,6 @@ type DBBundle struct {
 	dstSQLDriver  sqlReplication
 	srcFileDriver fileReplication
 	dstFileDriver fileReplication
-	report        struct {
-		mutex sync.RWMutex
-	}
 
 	// ENV vars
 	SrcDbDriver   string `split_words:"true" required:"true"`
@@ -317,10 +314,10 @@ func (dbb *DBBundle) Run() error {
 
 // Report implements interface that shows status detailed information
 func (dbb *DBBundle) Report() []Status {
-	dbb.report.mutex.RLock()
+	dbb.mutex.RLock()
 	var status []Status
 	status = append(status, dbb.status...)
-	dbb.report.mutex.RUnlock()
+	dbb.mutex.RUnlock()
 	for key, value := range status {
 		status[key].Duration = time.Now().Sub(value.Changed).String()
 	}
@@ -359,20 +356,16 @@ func (dbb *DBBundle) exists(table string) bool {
 
 func (dbb *DBBundle) updateSQLToSQLHandler() {
 	dbb.wg.Add(1)
-	dbb.mutex.Lock()
-	defer func() {
-		dbb.wg.Done()
-		dbb.mutex.Unlock()
-	}()
+	defer dbb.wg.Done()
 	for _, table := range dbb.UpdateTables {
-		dbb.report.mutex.Lock()
+		dbb.mutex.Lock()
 		for key, status := range dbb.status {
 			if status.Table == table {
 				dbb.status[key].Changed = time.Now()
 				dbb.status[key].Running = true
 			}
 		}
-		dbb.report.mutex.Unlock()
+		dbb.mutex.Unlock()
 		var errors uint64
 		dstTableName := dbb.TablePrefix + table + dbb.TablePostfix
 		rows, err := dbb.dstSQLDriver.GetLimited(dstTableName, dbb.UpdateRows)
@@ -544,13 +537,13 @@ func (dbb *DBBundle) updateSQLToSQLHandler() {
 								dbb.errlog.Println("Update - Table:", dstTableName, err)
 								errors++
 							} else {
-								dbb.report.mutex.Lock()
+								dbb.mutex.Lock()
 								for key, status := range dbb.status {
 									if status.Table == table {
 										dbb.status[key].Updated += count
 									}
 								}
-								dbb.report.mutex.Unlock()
+								dbb.mutex.Unlock()
 							}
 						}
 					}
@@ -563,7 +556,7 @@ func (dbb *DBBundle) updateSQLToSQLHandler() {
 				}
 			}
 		}
-		dbb.report.mutex.Lock()
+		dbb.mutex.Lock()
 		for key, status := range dbb.status {
 			if status.Table == table {
 				dbb.status[key].Errors += errors
@@ -571,26 +564,22 @@ func (dbb *DBBundle) updateSQLToSQLHandler() {
 				dbb.status[key].Running = false
 			}
 		}
-		dbb.report.mutex.Unlock()
+		dbb.mutex.Unlock()
 	}
 }
 
 func (dbb *DBBundle) fetchSQLHandler(intoFile bool) {
 	dbb.wg.Add(1)
-	dbb.mutex.Lock()
-	defer func() {
-		dbb.wg.Done()
-		dbb.mutex.Unlock()
-	}()
+	defer dbb.wg.Done()
 	for _, table := range dbb.InsertTables {
-		dbb.report.mutex.Lock()
+		dbb.mutex.Lock()
 		for key, status := range dbb.status {
 			if status.Table == table {
 				dbb.status[key].Changed = time.Now()
 				dbb.status[key].Running = true
 			}
 		}
-		dbb.report.mutex.Unlock()
+		dbb.mutex.Unlock()
 
 		var errors uint64
 		dstTableName := dbb.TablePrefix + table + dbb.TablePostfix
@@ -612,13 +601,13 @@ func (dbb *DBBundle) fetchSQLHandler(intoFile bool) {
 		if dstID < dbb.StartAfterID {
 			dstID = dbb.StartAfterID
 		}
-		dbb.report.mutex.Lock()
+		dbb.mutex.Lock()
 		for key, status := range dbb.status {
 			if status.Table == table {
 				dbb.status[key].LastID = dstID
 			}
 		}
-		dbb.report.mutex.Unlock()
+		dbb.mutex.Unlock()
 		if dstID < srcID {
 			for {
 				rows, err := dbb.srcSQLDriver.GetLimitedAfterID(table, dstID, dbb.InsertRows)
@@ -652,7 +641,7 @@ func (dbb *DBBundle) fetchSQLHandler(intoFile bool) {
 								dbb.errlog.Println("Insert - Table:", dstTableName, err)
 								errors++
 							} else {
-								dbb.report.mutex.Lock()
+								dbb.mutex.Lock()
 								for key, status := range dbb.status {
 									if status.Table == table {
 										dbb.status[key].Inserted++
@@ -660,7 +649,7 @@ func (dbb *DBBundle) fetchSQLHandler(intoFile bool) {
 										dstID = last
 									}
 								}
-								dbb.report.mutex.Unlock()
+								dbb.mutex.Unlock()
 							}
 						}
 					}
@@ -693,7 +682,7 @@ func (dbb *DBBundle) fetchSQLHandler(intoFile bool) {
 				}
 			}
 		}
-		dbb.report.mutex.Lock()
+		dbb.mutex.Lock()
 		for key, status := range dbb.status {
 			if status.Table == table {
 				dbb.status[key].Errors += errors
@@ -701,28 +690,24 @@ func (dbb *DBBundle) fetchSQLHandler(intoFile bool) {
 				dbb.status[key].Running = false
 			}
 		}
-		dbb.report.mutex.Unlock()
+		dbb.mutex.Unlock()
 	}
 }
 
 func (dbb *DBBundle) syncFileToFileHandler() {
 	dbb.wg.Add(1)
-	dbb.mutex.Lock()
-	defer func() {
-		dbb.wg.Done()
-		dbb.mutex.Unlock()
-	}()
+	defer dbb.wg.Done()
 	// scan specified directories (topics)
 	root := dbb.FileDataDir + string(os.PathSeparator) + dbb.SrcFileBucket + string(os.PathSeparator)
 	for _, topic := range dbb.SrcFileTopics {
-		dbb.report.mutex.Lock()
+		dbb.mutex.Lock()
 		for key, status := range dbb.status {
 			if status.Table == topic {
 				dbb.status[key].Changed = time.Now()
 				dbb.status[key].Running = true
 			}
 		}
-		dbb.report.mutex.Unlock()
+		dbb.mutex.Unlock()
 		var errors uint64
 		files, err := dbb.srcFileDriver.GetFiles(root+topic, dbb.FileSyncCount)
 		if err != nil {
@@ -742,13 +727,13 @@ func (dbb *DBBundle) syncFileToFileHandler() {
 				dbb.errlog.Println(err)
 				errors++
 			} else {
-				dbb.report.mutex.Lock()
+				dbb.mutex.Lock()
 				for key, status := range dbb.status {
 					if status.Table == topic {
 						dbb.status[key].Inserted++
 					}
 				}
-				dbb.report.mutex.Unlock()
+				dbb.mutex.Unlock()
 			}
 			if dbb.SrcFileRemove && err == nil {
 				err := dbb.srcFileDriver.Remove(stream.Handle.Name())
@@ -758,7 +743,7 @@ func (dbb *DBBundle) syncFileToFileHandler() {
 				}
 			}
 		}
-		dbb.report.mutex.Lock()
+		dbb.mutex.Lock()
 		for key, status := range dbb.status {
 			if status.Table == topic {
 				dbb.status[key].Errors += errors
@@ -766,7 +751,7 @@ func (dbb *DBBundle) syncFileToFileHandler() {
 				dbb.status[key].Running = false
 			}
 		}
-		dbb.report.mutex.Unlock()
+		dbb.mutex.Unlock()
 	}
 	dbb.stdlog.Println("Syncing done")
 }
