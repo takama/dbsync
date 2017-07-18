@@ -103,8 +103,10 @@ type DBBundle struct {
 	DstDbUsername string `split_words:"true"`
 	DstDbPassword string `split_words:"true"`
 
+	DstAccountRegion   string         `split_words:"true"`
 	DstAccountID       string         `split_words:"true"`
-	DstAppKey          string         `split_words:"true"`
+	DstAccountKey      string         `split_words:"true"`
+	DstAccountToken    string         `split_words:"true"`
 	DstFileJSON        bool           `split_words:"true"`
 	DstFileCompression bool           `split_words:"true"`
 	DstFileExtension   string         `split_words:"true"`
@@ -211,7 +213,7 @@ func New() (*DBBundle, error) {
 	switch strings.ToLower(bundle.DstDbDriver) {
 	case "b2":
 		bundle.dstFileDriver, err = b2.New(
-			bundle.DstAccountID, bundle.DstAppKey, bundle.DstFileBucket, bundle.DstFileID,
+			bundle.DstAccountID, bundle.DstAccountKey, bundle.DstFileBucket, bundle.DstFileID,
 			bundle.DstFileJSON, bundle.DstFileCompression, bundle.DstFileTopics,
 			bundle.DstFileExtension, bundle.DstFileExclude, bundle.DstFileSpec, bundle.DstFilePath,
 			bundle.DstFileName, bundle.DstFileHeader, bundle.DstFileColumns,
@@ -220,7 +222,16 @@ func New() (*DBBundle, error) {
 			return bundle, err
 		}
 	case "s3":
-		return nil, s3.ErrUnsupported
+		bundle.dstFileDriver, err = s3.New(
+			bundle.DstAccountRegion, bundle.DstAccountID, bundle.DstAccountKey,
+			bundle.DstAccountToken, bundle.DstFileBucket, bundle.DstFileID,
+			bundle.DstFileJSON, bundle.DstFileCompression, bundle.DstFileTopics,
+			bundle.DstFileExtension, bundle.DstFileExclude, bundle.DstFileSpec, bundle.DstFilePath,
+			bundle.DstFileName, bundle.DstFileHeader, bundle.DstFileColumns,
+		)
+		if err != nil {
+			return bundle, err
+		}
 	case "pgsql":
 		bundle.dstSQLDriver, err = postgres.New(
 			bundle.DstDbHost, bundle.DstDbPort, bundle.DstDbName,
@@ -717,6 +728,10 @@ func (dbb *DBBundle) syncFileToFileHandler() {
 		for name, stream := range files {
 			select {
 			case <-dbb.done:
+				err := binding.Close(files)
+				if err != nil {
+					dbb.errlog.Println(err)
+				}
 				dbb.stdlog.Println("Syncing gracefully done")
 				return
 			default:
@@ -735,6 +750,7 @@ func (dbb *DBBundle) syncFileToFileHandler() {
 				}
 				dbb.mutex.Unlock()
 			}
+			delete(files, name)
 			if dbb.SrcFileRemove && err == nil {
 				err := dbb.srcFileDriver.Remove(stream.Handle.Name())
 				if err != nil {
