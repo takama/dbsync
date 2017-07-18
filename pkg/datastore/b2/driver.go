@@ -38,7 +38,7 @@ var ErrUnsupported = errors.New("Unsupported method for BackBlaze B2")
 
 // New creates B2 driver
 func New(
-	accountID, appKey, bucket, id string, json, compression bool, topics []string,
+	accountID, accountKey, bucket, id string, json, compression bool, topics []string,
 	extension string, exclude, spec, path, name, header, columns mapping.Fields,
 ) (db *B2, err error) {
 	db = &B2{
@@ -56,7 +56,7 @@ func New(
 		header:      header,
 		columns:     columns,
 	}
-	client, err := blazer.NewClient(db.ctx, accountID, appKey)
+	client, err := blazer.NewClient(db.ctx, accountID, accountKey)
 	if err != nil {
 		return
 	}
