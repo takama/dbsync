@@ -3,7 +3,7 @@ BUILDTAGS=
 # Use the 0.0.0 tag for testing, it shouldn't clobber any release builds
 APP?=dbsync
 USERSPACE?=takama
-RELEASE?=0.2.1
+RELEASE?=0.2.2
 PROJECT?=github.com/${USERSPACE}/${APP}
 HELM_REPO?=https://${USERSPACE}.github.io/${APP}
 GOOS?=linux
