@@ -33,7 +33,7 @@ type File struct {
 	header      mapping.Fields
 	columns     mapping.Fields
 
-	stream  map[string]binding.Stream
+	flow    map[string]binding.Stream
 	lastIDs map[string]idSpec
 }
 
@@ -71,7 +71,7 @@ func New(
 		name:        name,
 		header:      header,
 		columns:     columns,
-		stream:      make(map[string]binding.Stream),
+		flow:        make(map[string]binding.Stream),
 		lastIDs:     make(map[string]idSpec),
 	}
 	err = db.checkDatastorePath()
@@ -198,26 +198,9 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 
 // Close flushes data and closes files
 func (db *File) Close() (err error) {
-	for ndx, stream := range db.stream {
-		if stream.GZWriter != nil {
-			err = stream.GZWriter.Close()
-			if err != nil {
-				return err
-			}
-		}
-		if stream.Writer != nil {
-			err = stream.Writer.Flush()
-			if err != nil {
-				return err
-			}
-		}
-		if stream.Handle != nil {
-			err = stream.Handle.Close()
-			if err != nil {
-				return err
-			}
-		}
-		delete(db.stream, ndx)
+	err = binding.Close(db.flow)
+	if err != nil {
+		return
 	}
 	for bucket := range db.lastIDs {
 		err = db.saveLastID(bucket)
@@ -293,8 +276,9 @@ func (db *File) PutFile(path string, stream binding.Stream) error {
 				return err
 			}
 		}
+		partExtension := ".part"
 		if str := strings.Trim(db.extension, ". "); str != "" {
-			path = path + "." + str
+			path = path + "." + str + partExtension
 		}
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 		if err != nil {
@@ -339,7 +323,7 @@ func (db *File) bucketName(bucket string) string {
 
 func (db *File) save(bucket, path, data string) error {
 	path = db.dataDir + string(os.PathSeparator) + db.bucketName(bucket) + string(os.PathSeparator) + path
-	stream, ok := db.stream[path]
+	stream, ok := db.flow[path]
 	if !ok {
 		dir := filepath.Dir(path)
 		_, err := os.Stat(dir)
@@ -363,19 +347,19 @@ func (db *File) save(bucket, path, data string) error {
 				Writer: bufio.NewWriter(file),
 			}
 		}
-		db.stream[path] = stream
+		db.flow[path] = stream
 	}
 	if db.compression {
 		_, err := stream.GZWriter.Write([]byte(data))
 		if err != nil {
 			stream.Handle.Close()
-			delete(db.stream, path)
+			delete(db.flow, path)
 		}
 	} else {
 		_, err := stream.Writer.WriteString(data)
 		if err != nil {
 			stream.Handle.Close()
-			delete(db.stream, path)
+			delete(db.flow, path)
 		}
 	}
 	return nil
