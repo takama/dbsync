@@ -302,6 +302,12 @@ func (db *File) PutFile(path string, stream binding.Stream) error {
 				return err
 			}
 		}
+		if err := file.Close(); err != nil {
+			return err
+		}
+		if err := os.Rename(path, strings.TrimSuffix(path, partExtension)); err != nil {
+			return err
+		}
 		return stream.Handle.Close()
 	}
 
