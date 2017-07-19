@@ -123,7 +123,7 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 				continue
 			}
 			part := mapping.Render(field, string(os.PathSeparator), "", false, false, columns, values)
-			if part == string(os.PathSeparator) {
+			if part == string(os.PathSeparator) || part == "" {
 				return last, ErrInvalidPath
 			}
 			path = path + part
