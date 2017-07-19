@@ -723,7 +723,11 @@ func (dbb *DBBundle) syncFileToFileHandler() {
 		files, err := dbb.srcFileDriver.GetFiles(root+topic, dbb.FileSyncCount)
 		if err != nil {
 			dbb.errlog.Println(err)
-			errors++
+			if len(files) == 0 {
+				dbb.stdlog.Println("Will trying to take the files the next time")
+			} else {
+				errors++
+			}
 		}
 		for name, stream := range files {
 			select {
