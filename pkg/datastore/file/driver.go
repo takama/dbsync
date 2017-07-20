@@ -110,7 +110,7 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 	}
 	// Check filters
 	for _, field := range db.exclude {
-		if field.Topic == mapping.Render(field, "", "", false, false, columns, values) {
+		if field.Topic == mapping.RenderTxt(field, "", "", false, false, columns, values) {
 			return
 		}
 	}
@@ -122,7 +122,7 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 			if field.Topic != "" && field.Topic != topic {
 				continue
 			}
-			part := mapping.Render(field, string(os.PathSeparator), "", false, false, columns, values)
+			part := mapping.RenderTxt(field, string(os.PathSeparator), "", false, false, columns, values)
 			if part == string(os.PathSeparator) || part == "" {
 				return last, ErrInvalidPath
 			}
@@ -134,7 +134,7 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 			if field.Topic != "" && field.Topic != topic {
 				continue
 			}
-			path = path + mapping.Render(field, string(os.PathSeparator), "", false, false, columns, values)
+			path = path + mapping.RenderTxt(field, string(os.PathSeparator), "", false, false, columns, values)
 		}
 		if str := strings.Trim(db.extension, ". "); str != "" {
 			path = path + "." + str
@@ -146,7 +146,7 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 			if field.Topic != "" && field.Topic != topic {
 				continue
 			}
-			data = data + mapping.Render(field, " ", "", false, false, columns, values)
+			data = data + mapping.RenderTxt(field, " ", "", false, false, columns, values)
 		}
 		data = data + "\n" + strings.Repeat("=", len(data)) + "\n"
 
@@ -158,7 +158,7 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 					if field.Topic != "" && field.Topic != topic {
 						continue
 					}
-					data = data + mapping.Render(field, ": ", ", ", true, true, columns, values)
+					data = data + mapping.RenderTxt(field, ": ", ", ", true, true, columns, values)
 				}
 				data = strings.Trim(data, ", ") + "}"
 			} else {
@@ -166,11 +166,11 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 					if field.Topic != "" && field.Topic != topic {
 						continue
 					}
-					data = data + mapping.Render(field, ": ", "\n", true, false, columns, values)
+					data = data + mapping.RenderTxt(field, ": ", "\n", true, false, columns, values)
 				}
 			}
 		} else {
-			data = data + mapping.Render(
+			data = data + mapping.RenderTxt(
 				mapping.Field{Type: "string", Format: "%s"},
 				": ", "\n", true, false, columns, values,
 			)
@@ -188,7 +188,7 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 	for _, spec := range db.spec {
 		if strings.ToLower(spec.Topic) == "at" ||
 			(spec.Topic == "" && strings.ToLower(spec.Name) == "at") {
-			at = mapping.Render(spec, "", "", false, false, columns, values)
+			at = mapping.RenderTxt(spec, "", "", false, false, columns, values)
 		}
 	}
 	// Save Last ID and AT

@@ -39,8 +39,14 @@ func (f *Fields) Decode(value string) error {
 	return nil
 }
 
-// Render generates data
-func Render(
+// RenderMapping creates mapping
+func (f *Fields) RenderMapping() (mapping string) {
+
+	return
+}
+
+// RenderTxt generates plain text data
+func RenderTxt(
 	field Field, delimiter, finalizer string, useNames bool, quotas bool,
 	columns []string, values []interface{},
 ) (data string) {
