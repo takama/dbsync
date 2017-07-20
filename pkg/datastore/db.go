@@ -50,8 +50,7 @@ type sqlReplication interface {
 }
 
 type documentReplication interface {
-	LastID(document string) (uint64, error)
-	AddFromSQL(document string, columns []string, values []interface{}) (lastID uint64, err error)
+	AddFromSQL(document string, columns []string, values []interface{}) (err error)
 	Close() error
 }
 
