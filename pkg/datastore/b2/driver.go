@@ -113,7 +113,7 @@ func (db *B2) AddFromSQL(bucket string, columns []string, values []interface{}) 
 			if field.Topic != "" && field.Topic != topic {
 				continue
 			}
-			path = path + mapping.Render(field, "/", "", false, false, columns, values)
+			path = path + mapping.RenderTxt(field, "/", "", false, false, columns, values)
 		}
 
 		// Generate name
@@ -121,7 +121,7 @@ func (db *B2) AddFromSQL(bucket string, columns []string, values []interface{}) 
 			if field.Topic != "" && field.Topic != topic {
 				continue
 			}
-			path = path + mapping.Render(field, "/", "", false, false, columns, values)
+			path = path + mapping.RenderTxt(field, "/", "", false, false, columns, values)
 		}
 		if str := strings.Trim(db.extension, ". "); str != "" {
 			path = path + "." + str
@@ -133,7 +133,7 @@ func (db *B2) AddFromSQL(bucket string, columns []string, values []interface{}) 
 			if field.Topic != "" && field.Topic != topic {
 				continue
 			}
-			data = data + mapping.Render(field, " ", "", false, false, columns, values)
+			data = data + mapping.RenderTxt(field, " ", "", false, false, columns, values)
 		}
 		data = data + "\n" + strings.Repeat("=", len(data)) + "\n"
 
@@ -145,7 +145,7 @@ func (db *B2) AddFromSQL(bucket string, columns []string, values []interface{}) 
 					if field.Topic != "" && field.Topic != topic {
 						continue
 					}
-					data = data + mapping.Render(field, ": ", ", ", true, true, columns, values)
+					data = data + mapping.RenderTxt(field, ": ", ", ", true, true, columns, values)
 				}
 				data = strings.Trim(data, ", ") + "}"
 			} else {
@@ -153,11 +153,11 @@ func (db *B2) AddFromSQL(bucket string, columns []string, values []interface{}) 
 					if field.Topic != "" && field.Topic != topic {
 						continue
 					}
-					data = data + mapping.Render(field, ": ", "\n", true, false, columns, values)
+					data = data + mapping.RenderTxt(field, ": ", "\n", true, false, columns, values)
 				}
 			}
 		} else {
-			data = data + mapping.Render(
+			data = data + mapping.RenderTxt(
 				mapping.Field{Type: "string", Format: "%s"},
 				": ", "\n", true, false, columns, values,
 			)
