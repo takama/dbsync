@@ -49,6 +49,12 @@ type sqlReplication interface {
 	Close() error
 }
 
+type documentReplication interface {
+	LastID(document string) (uint64, error)
+	AddFromSQL(document string, columns []string, values []interface{}) (lastID uint64, err error)
+	Close() error
+}
+
 type fileReplication interface {
 	LastID(bucket string) (uint64, error)
 	AddFromSQL(bucket string, columns []string, values []interface{}) (lastID uint64, err error)
@@ -58,29 +64,67 @@ type fileReplication interface {
 	Close() error
 }
 
-// DBBundle contains drivers/tables information
+// DBBundle contains drivers/documents/tables information
 type DBBundle struct {
-	mutex         sync.RWMutex
-	done          chan bool
-	wg            *sync.WaitGroup
-	stdlog        *log.Logger
-	errlog        *log.Logger
-	status        []Status
-	srcSQLDriver  sqlReplication
-	dstSQLDriver  sqlReplication
+	mutex  sync.RWMutex
+	done   chan bool
+	wg     *sync.WaitGroup
+	stdlog *log.Logger
+	errlog *log.Logger
+	status []Status
+
+	// SQL drivers interfaces
+	srcSQLDriver sqlReplication
+	dstSQLDriver sqlReplication
+
+	// Document drivers interfaces
+	srcDocumentDriver documentReplication
+	dstDocumentDriver documentReplication
+
+	// File drivers interfaces
 	srcFileDriver fileReplication
 	dstFileDriver fileReplication
 
-	// ENV vars
-	SrcDbDriver   string `split_words:"true" required:"true"`
+	// Documents/Tables names declaration
+	UpdateDocuments []string `split_words:"true"`
+	InsertDocuments []string `split_words:"true"`
+	DocumentsPrefix string   `split_words:"true"`
+	DocumentsSuffix string   `split_words:"true"`
+
+	// Start synchronization after specified ID
+	StartAfterID uint64 `split_words:"true"`
+
+	// Periods in seconds between bulk operations
+	UpdatePeriod uint64 `split_words:"true" required:"true"`
+	InsertPeriod uint64 `split_words:"true" required:"true"`
+
+	// Count of records for operations
+	UpdateRecords uint64 `split_words:"true" required:"true"`
+	InsertRecords uint64 `split_words:"true" required:"true"`
+
+	// Count of documents for operations
+	DocumentsSyncCount int `split_words:"true"`
+
+	// File data directory
+	FileDataDir string `split_words:"true"`
+
+	// Source driver type
+	SrcDriver string `split_words:"true" required:"true"`
+
+	// Database replication source environments
 	SrcDbHost     string `split_words:"true"`
 	SrcDbPort     uint64 `split_words:"true"`
 	SrcDbName     string `split_words:"true"`
 	SrcDbUsername string `split_words:"true"`
 	SrcDbPassword string `split_words:"true"`
 
-	SrcAccountID       string         `split_words:"true"`
-	SrcAppKey          string         `split_words:"true"`
+	// Datastore account source environments (like cloud datastore S3)
+	SrcAccountRegion string `split_words:"true"`
+	SrcAccountID     string `split_words:"true"`
+	SrcAccountKey    string `split_words:"true"`
+	SrcAccountToken  string `split_words:"true"`
+
+	// File replication source environments
 	SrcFileJSON        bool           `split_words:"true"`
 	SrcFileCompression bool           `split_words:"true"`
 	SrcFileRemove      bool           `split_words:"true"`
@@ -96,17 +140,23 @@ type DBBundle struct {
 	SrcFileHeader      mapping.Fields `split_words:"true"`
 	SrcFileColumns     mapping.Fields `split_words:"true"`
 
-	DstDbDriver   string `split_words:"true" required:"true"`
+	// Destination driver type
+	DstDriver string `split_words:"true" required:"true"`
+
+	// Database replication destination environments
 	DstDbHost     string `split_words:"true"`
 	DstDbPort     uint64 `split_words:"true"`
 	DstDbName     string `split_words:"true"`
 	DstDbUsername string `split_words:"true"`
 	DstDbPassword string `split_words:"true"`
 
-	DstAccountRegion   string         `split_words:"true"`
-	DstAccountID       string         `split_words:"true"`
-	DstAccountKey      string         `split_words:"true"`
-	DstAccountToken    string         `split_words:"true"`
+	// Datastore account destination environments (like cloud datastore S3)
+	DstAccountRegion string `split_words:"true"`
+	DstAccountID     string `split_words:"true"`
+	DstAccountKey    string `split_words:"true"`
+	DstAccountToken  string `split_words:"true"`
+
+	// File replication destination environments
 	DstFileJSON        bool           `split_words:"true"`
 	DstFileCompression bool           `split_words:"true"`
 	DstFileExtension   string         `split_words:"true"`
@@ -120,21 +170,6 @@ type DBBundle struct {
 	DstFileName        mapping.Fields `split_words:"true"`
 	DstFileHeader      mapping.Fields `split_words:"true"`
 	DstFileColumns     mapping.Fields `split_words:"true"`
-
-	UpdateTables []string `split_words:"true"`
-	InsertTables []string `split_words:"true"`
-	TablePrefix  string   `envconfig:"DBSYNC_DST_DB_TABLES_PREFIX"`
-	TablePostfix string   `envconfig:"DBSYNC_DST_DB_TABLES_POSTFIX"`
-	StartAfterID uint64   `split_words:"true"`
-
-	UpdatePeriod uint64 `split_words:"true" required:"true"`
-	InsertPeriod uint64 `split_words:"true" required:"true"`
-	UpdateRows   uint64 `split_words:"true" required:"true"`
-	InsertRows   uint64 `split_words:"true" required:"true"`
-
-	FileSyncCount int `split_words:"true"`
-
-	FileDataDir string `split_words:"true"`
 }
 
 // ErrUnsupportedFileToSQL declares error for unsupported methods
@@ -160,12 +195,12 @@ func New() (*DBBundle, error) {
 		return nil, err
 	}
 
-	for _, table := range bundle.UpdateTables {
+	for _, table := range bundle.UpdateDocuments {
 		if !bundle.exists(table) {
 			bundle.status = append(bundle.status, Status{Table: table})
 		}
 	}
-	for _, table := range bundle.InsertTables {
+	for _, table := range bundle.InsertDocuments {
 		if !bundle.exists(table) {
 			bundle.status = append(bundle.status, Status{Table: table})
 		}
@@ -177,7 +212,7 @@ func New() (*DBBundle, error) {
 		}
 	}
 
-	switch strings.ToLower(bundle.SrcDbDriver) {
+	switch strings.ToLower(bundle.SrcDriver) {
 	case "b2":
 		return nil, b2.ErrUnsupported
 	case "s3":
@@ -210,7 +245,7 @@ func New() (*DBBundle, error) {
 			return bundle, err
 		}
 	}
-	switch strings.ToLower(bundle.DstDbDriver) {
+	switch strings.ToLower(bundle.DstDriver) {
 	case "b2":
 		bundle.dstFileDriver, err = b2.New(
 			bundle.DstAccountID, bundle.DstAccountKey, bundle.DstFileBucket, bundle.DstFileID,
@@ -368,7 +403,7 @@ func (dbb *DBBundle) exists(table string) bool {
 func (dbb *DBBundle) updateSQLToSQLHandler() {
 	dbb.wg.Add(1)
 	defer dbb.wg.Done()
-	for _, table := range dbb.UpdateTables {
+	for _, table := range dbb.UpdateDocuments {
 		dbb.mutex.Lock()
 		for key, status := range dbb.status {
 			if status.Table == table {
@@ -378,8 +413,8 @@ func (dbb *DBBundle) updateSQLToSQLHandler() {
 		}
 		dbb.mutex.Unlock()
 		var errors uint64
-		dstTableName := dbb.TablePrefix + table + dbb.TablePostfix
-		rows, err := dbb.dstSQLDriver.GetLimited(dstTableName, dbb.UpdateRows)
+		dstTableName := dbb.DocumentsPrefix + table + dbb.DocumentsSuffix
+		rows, err := dbb.dstSQLDriver.GetLimited(dstTableName, dbb.UpdateRecords)
 		if err != nil {
 			if err != sql.ErrNoRows {
 				dbb.errlog.Println("GetLimited - Table:", dstTableName, err)
@@ -582,7 +617,7 @@ func (dbb *DBBundle) updateSQLToSQLHandler() {
 func (dbb *DBBundle) fetchSQLHandler(intoFile bool) {
 	dbb.wg.Add(1)
 	defer dbb.wg.Done()
-	for _, table := range dbb.InsertTables {
+	for _, table := range dbb.InsertDocuments {
 		dbb.mutex.Lock()
 		for key, status := range dbb.status {
 			if status.Table == table {
@@ -593,7 +628,7 @@ func (dbb *DBBundle) fetchSQLHandler(intoFile bool) {
 		dbb.mutex.Unlock()
 
 		var errors uint64
-		dstTableName := dbb.TablePrefix + table + dbb.TablePostfix
+		dstTableName := dbb.DocumentsPrefix + table + dbb.DocumentsSuffix
 		srcID, err := dbb.srcSQLDriver.LastID(table)
 		if err != nil {
 			dbb.errlog.Println("LastID - Table:", table, err)
@@ -621,7 +656,7 @@ func (dbb *DBBundle) fetchSQLHandler(intoFile bool) {
 		dbb.mutex.Unlock()
 		if dstID < srcID {
 			for {
-				rows, err := dbb.srcSQLDriver.GetLimitedAfterID(table, dstID, dbb.InsertRows)
+				rows, err := dbb.srcSQLDriver.GetLimitedAfterID(table, dstID, dbb.InsertRecords)
 				if err != nil {
 					dbb.errlog.Println("GetLimitedAfterID - Table:", table, err)
 					errors++
@@ -720,7 +755,7 @@ func (dbb *DBBundle) syncFileToFileHandler() {
 		}
 		dbb.mutex.Unlock()
 		var errors uint64
-		files, err := dbb.srcFileDriver.GetFiles(root+topic, dbb.FileSyncCount)
+		files, err := dbb.srcFileDriver.GetFiles(root+topic, dbb.DocumentsSyncCount)
 		if err != nil {
 			dbb.errlog.Println(err)
 			if len(files) == 0 {
