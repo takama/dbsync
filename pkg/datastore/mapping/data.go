@@ -96,6 +96,13 @@ func RenderTxt(
 				} else {
 					data = data + dlm + fmt.Sprintf(field.Format, v)
 				}
+			case "float":
+				v, err := strconv.ParseFloat(string(value), 32)
+				if err != nil {
+					data = data + dlm + strValue
+				} else {
+					data = data + dlm + fmt.Sprintf(field.Format, v)
+				}
 			case "bool":
 				v, err := strconv.ParseBool(string(value))
 				if err != nil {
