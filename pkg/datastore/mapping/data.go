@@ -15,6 +15,28 @@ type Field struct {
 	Format string
 }
 
+// Cursor contains current pointer to document
+type Cursor struct {
+	ID string
+	AT string
+}
+
+// Decode updates pointers or markers from data
+func (c *Cursor) Decode(specification Fields, columns []string, values []interface{}) {
+	for _, cursor := range specification {
+		// Check cursor for ID field
+		if strings.ToLower(cursor.Topic) == "id" ||
+			(cursor.Topic == "" && strings.ToLower(cursor.Name) == "id") {
+			c.ID = RenderTxt(cursor, "", "", false, false, columns, values)
+		}
+		// Check cursor for AT field
+		if strings.ToLower(cursor.Topic) == "at" ||
+			(cursor.Topic == "" && strings.ToLower(cursor.Name) == "at") {
+			c.AT = RenderTxt(cursor, "", "", false, false, columns, values)
+		}
+	}
+}
+
 // Fields declared as type which used in decoder
 type Fields []Field
 
