@@ -12,12 +12,23 @@ import (
 
 	"github.com/takama/dbsync/pkg/datastore/b2"
 	"github.com/takama/dbsync/pkg/datastore/binding"
+	"github.com/takama/dbsync/pkg/datastore/elastic"
 	"github.com/takama/dbsync/pkg/datastore/file"
 	"github.com/takama/dbsync/pkg/datastore/mapping"
 	"github.com/takama/dbsync/pkg/datastore/mysql"
 	"github.com/takama/dbsync/pkg/datastore/postgres"
 	"github.com/takama/dbsync/pkg/datastore/s3"
 	"github.com/takama/envconfig"
+)
+
+type syncType int
+
+// synchronization types
+const (
+	sql2sql syncType = iota
+	sql2file
+	sql2doc
+	file2file
 )
 
 // DBHandler provide a simple handler interface for DB
@@ -50,7 +61,8 @@ type sqlReplication interface {
 }
 
 type documentReplication interface {
-	AddFromSQL(document string, columns []string, values []interface{}) (err error)
+	LastID(document string) (uint64, error)
+	AddFromSQL(document string, columns []string, values []interface{}) (lastID uint64, err error)
 	Close() error
 }
 
@@ -65,12 +77,13 @@ type fileReplication interface {
 
 // DBBundle contains drivers/documents/tables information
 type DBBundle struct {
-	mutex  sync.RWMutex
-	done   chan bool
-	wg     *sync.WaitGroup
-	stdlog *log.Logger
-	errlog *log.Logger
-	status []Status
+	mutex     sync.RWMutex
+	done      chan bool
+	wg        *sync.WaitGroup
+	stdlog    *log.Logger
+	errlog    *log.Logger
+	status    []Status
+	direction syncType
 
 	// SQL drivers interfaces
 	srcSQLDriver sqlReplication
@@ -90,8 +103,14 @@ type DBBundle struct {
 	DocumentsPrefix string   `split_words:"true"`
 	DocumentsSuffix string   `split_words:"true"`
 
-	// Start synchronization after specified ID
+	// Cursor synchronization specification
+	CursorSpec mapping.Fields `split_words:"true"`
+
+	// ID pointer management
+	IDName       string `envconfig:"DBSYNC_ID_NAME"`
 	StartAfterID uint64 `split_words:"true"`
+	StopBeforeID uint64 `split_words:"true"`
+	Reverse      bool   `split_words:"true"`
 
 	// Periods in seconds between bulk operations
 	UpdatePeriod uint64 `split_words:"true" required:"true"`
@@ -129,7 +148,6 @@ type DBBundle struct {
 	SrcFileRemove      bool           `split_words:"true"`
 	SrcFileExtension   string         `split_words:"true"`
 	SrcFileBucket      string         `split_words:"true"`
-	SrcFileID          string         `split_words:"true"`
 	SrcFileTopics      []string       `split_words:"true"`
 	SrcFileMatch       string         `split_words:"true"`
 	SrcFileExclude     mapping.Fields `split_words:"true"`
@@ -160,7 +178,6 @@ type DBBundle struct {
 	DstFileCompression bool           `split_words:"true"`
 	DstFileExtension   string         `split_words:"true"`
 	DstFileBucket      string         `split_words:"true"`
-	DstFileID          string         `split_words:"true"`
 	DstFileTopics      []string       `split_words:"true"`
 	DstFileMatch       string         `split_words:"true"`
 	DstFileExclude     mapping.Fields `split_words:"true"`
@@ -169,10 +186,28 @@ type DBBundle struct {
 	DstFileName        mapping.Fields `split_words:"true"`
 	DstFileHeader      mapping.Fields `split_words:"true"`
 	DstFileColumns     mapping.Fields `split_words:"true"`
+
+	// Documents replication destination environments
+	DstDocIndices mapping.Fields `split_words:"true"`
+	DstDocInclude mapping.Fields `split_words:"true"`
+	DstDocExclude mapping.Fields `split_words:"true"`
+	DstDocColumns mapping.Fields `split_words:"true"`
 }
 
 // ErrUnsupportedFileToSQL declares error for unsupported methods
 var ErrUnsupportedFileToSQL = errors.New("Unsupported synchronization from file to SQL data")
+
+// ErrUnsupportedFileToDocument declares error for unsupported methods
+var ErrUnsupportedFileToDocument = errors.New("Unsupported synchronization from file to Document")
+
+// ErrUnsupportedDocumentToSQL declares error for unsupported methods
+var ErrUnsupportedDocumentToSQL = errors.New("Unsupported synchronization from document to SQL data")
+
+// ErrUnsupportedDocumentToFile declares error for unsupported methods
+var ErrUnsupportedDocumentToFile = errors.New("Unsupported synchronization from document to file")
+
+// ErrUnsupportedDocumentToDocument declares error for unsupported methods
+var ErrUnsupportedDocumentToDocument = errors.New("Unsupported synchronization from document to document")
 
 // ErrNothingToSyncSource declares error if unspecified source driver
 var ErrNothingToSyncSource = errors.New("Nothing to sync, please specify source driver")
@@ -212,6 +247,8 @@ func New() (*DBBundle, error) {
 	}
 
 	switch strings.ToLower(bundle.SrcDriver) {
+	case "elastic":
+		return nil, elastic.ErrUnsupported
 	case "b2":
 		return nil, b2.ErrUnsupported
 	case "s3":
@@ -234,7 +271,7 @@ func New() (*DBBundle, error) {
 		}
 	case "file":
 		bundle.srcFileDriver, err = file.New(
-			bundle.FileDataDir, bundle.SrcFileBucket, bundle.SrcFileID,
+			bundle.FileDataDir, bundle.SrcFileBucket, bundle.IDName,
 			bundle.SrcFileJSON, bundle.SrcFileCompression, bundle.SrcFileTopics,
 			bundle.SrcFileExtension, bundle.SrcFileMatch, bundle.SrcFileExclude,
 			bundle.SrcFileSpec, bundle.SrcFilePath, bundle.SrcFileName,
@@ -245,9 +282,14 @@ func New() (*DBBundle, error) {
 		}
 	}
 	switch strings.ToLower(bundle.DstDriver) {
+	case "elastic":
+		bundle.dstDocumentDriver, err = elastic.New(
+			bundle.DstDbHost, bundle.DstDbPort, bundle.IDName, bundle.CursorSpec,
+			bundle.DstDocIndices, bundle.DstDocInclude, bundle.DstDocExclude, bundle.DstDocColumns,
+		)
 	case "b2":
 		bundle.dstFileDriver, err = b2.New(
-			bundle.DstAccountID, bundle.DstAccountKey, bundle.DstFileBucket, bundle.DstFileID,
+			bundle.DstAccountID, bundle.DstAccountKey, bundle.DstFileBucket, bundle.IDName,
 			bundle.DstFileJSON, bundle.DstFileCompression, bundle.DstFileTopics,
 			bundle.DstFileExtension, bundle.DstFileExclude, bundle.DstFileSpec, bundle.DstFilePath,
 			bundle.DstFileName, bundle.DstFileHeader, bundle.DstFileColumns,
@@ -258,7 +300,7 @@ func New() (*DBBundle, error) {
 	case "s3":
 		bundle.dstFileDriver, err = s3.New(
 			bundle.DstAccountRegion, bundle.DstAccountID, bundle.DstAccountKey,
-			bundle.DstAccountToken, bundle.DstFileBucket, bundle.DstFileID,
+			bundle.DstAccountToken, bundle.DstFileBucket, bundle.IDName,
 			bundle.DstFileJSON, bundle.DstFileCompression, bundle.DstFileTopics,
 			bundle.DstFileExtension, bundle.DstFileExclude, bundle.DstFileSpec, bundle.DstFilePath,
 			bundle.DstFileName, bundle.DstFileHeader, bundle.DstFileColumns,
@@ -284,7 +326,7 @@ func New() (*DBBundle, error) {
 		}
 	case "file":
 		bundle.dstFileDriver, err = file.New(
-			bundle.FileDataDir, bundle.DstFileBucket, bundle.DstFileID,
+			bundle.FileDataDir, bundle.DstFileBucket, bundle.IDName,
 			bundle.DstFileJSON, bundle.DstFileCompression, bundle.DstFileTopics,
 			bundle.DstFileExtension, bundle.DstFileMatch, bundle.DstFileExclude,
 			bundle.DstFileSpec, bundle.DstFilePath, bundle.DstFileName,
@@ -300,11 +342,11 @@ func New() (*DBBundle, error) {
 
 // Run implements interface that starts synchronization of the db items
 func (dbb *DBBundle) Run() error {
-	if dbb.srcFileDriver == nil && dbb.srcSQLDriver == nil {
+	if dbb.srcFileDriver == nil && dbb.srcSQLDriver == nil && dbb.srcDocumentDriver == nil {
 		// nothing to convert
 		return ErrNothingToSyncSource
 	}
-	if dbb.dstFileDriver == nil && dbb.dstSQLDriver == nil {
+	if dbb.dstFileDriver == nil && dbb.dstSQLDriver == nil && dbb.dstDocumentDriver == nil {
 		// nothing to convert
 		return ErrNothingToSyncDestination
 	}
@@ -312,18 +354,53 @@ func (dbb *DBBundle) Run() error {
 		// unsupported (File to SQL)
 		return ErrUnsupportedFileToSQL
 	}
-	go func() {
-		if dbb.srcFileDriver != nil {
-			if dbb.dstFileDriver != nil {
-				dbb.syncFileToFileHandler()
-			}
+	if dbb.srcFileDriver != nil && dbb.dstDocumentDriver != nil {
+		// unsupported (File to Document)
+		return ErrUnsupportedFileToDocument
+	}
+	if dbb.srcDocumentDriver != nil && dbb.dstSQLDriver != nil {
+		// unsupported (Document to SQL)
+		return ErrUnsupportedDocumentToSQL
+	}
+	if dbb.srcDocumentDriver != nil && dbb.dstFileDriver != nil {
+		// unsupported (Document to File)
+		return ErrUnsupportedDocumentToFile
+	}
+	if dbb.srcDocumentDriver != nil && dbb.dstDocumentDriver != nil {
+		// unsupported (Document to Document)
+		return ErrUnsupportedDocumentToDocument
+	}
+	if dbb.srcFileDriver != nil {
+		if dbb.dstFileDriver != nil {
+			dbb.direction = file2file
+		}
+	} else {
+		if dbb.dstFileDriver != nil {
+			dbb.direction = sql2file
 		} else {
-			if dbb.dstFileDriver != nil {
-				dbb.fetchSQLHandler(true)
+			if dbb.dstDocumentDriver != nil {
+				dbb.direction = sql2doc
 			} else {
-				dbb.updateSQLToSQLHandler()
-				dbb.fetchSQLHandler(false)
+				dbb.direction = sql2sql
 			}
+		}
+	}
+	go func() {
+		// usecases:
+		// 1. File to File/B2/S3
+		// 2. SQL to Document
+		// 3. SQL to File/B2/S3
+		// 4. SQL to SQL
+		switch dbb.direction {
+		case file2file:
+			dbb.syncFileToFileHandler()
+		case sql2file:
+			fallthrough
+		case sql2doc:
+			dbb.fetchSQLHandler()
+		case sql2sql:
+			dbb.updateSQLToSQLHandler()
+			dbb.fetchSQLHandler()
 		}
 		// setup handlers
 		if dbb.srcSQLDriver != nil && dbb.dstSQLDriver != nil {
@@ -338,17 +415,16 @@ func (dbb *DBBundle) Run() error {
 		insertTicker := time.NewTicker(time.Duration(dbb.InsertPeriod) * time.Second)
 		go func() {
 			for range insertTicker.C {
-				if dbb.srcFileDriver != nil {
-					if dbb.dstFileDriver != nil {
-						dbb.syncFileToFileHandler()
-					}
-				} else {
-					if dbb.dstFileDriver != nil {
-						dbb.fetchSQLHandler(true)
-					} else {
-						dbb.updateSQLToSQLHandler()
-						dbb.fetchSQLHandler(false)
-					}
+				switch dbb.direction {
+				case file2file:
+					dbb.syncFileToFileHandler()
+				case sql2file:
+					fallthrough
+				case sql2doc:
+					dbb.fetchSQLHandler()
+				case sql2sql:
+					dbb.updateSQLToSQLHandler()
+					dbb.fetchSQLHandler()
 				}
 			}
 		}()
@@ -613,7 +689,7 @@ func (dbb *DBBundle) updateSQLToSQLHandler() {
 	}
 }
 
-func (dbb *DBBundle) fetchSQLHandler(intoFile bool) {
+func (dbb *DBBundle) fetchSQLHandler() {
 	dbb.wg.Add(1)
 	defer dbb.wg.Done()
 	for _, table := range dbb.InsertDocuments {
@@ -626,17 +702,23 @@ func (dbb *DBBundle) fetchSQLHandler(intoFile bool) {
 		}
 		dbb.mutex.Unlock()
 
-		var errors uint64
+		var errors, srcID, dstID uint64
+		var err error
 		dstTableName := dbb.DocumentsPrefix + table + dbb.DocumentsSuffix
-		srcID, err := dbb.srcSQLDriver.LastID(table)
+		srcID, err = dbb.srcSQLDriver.LastID(table)
 		if err != nil {
 			dbb.errlog.Println("LastID - Table:", table, err)
 			errors++
 		}
-		var dstID uint64
-		if intoFile {
+		if dbb.StopBeforeID != 0 && srcID > dbb.StopBeforeID {
+			srcID = dbb.StopBeforeID
+		}
+		switch dbb.direction {
+		case sql2file:
 			dstID, err = dbb.dstFileDriver.LastID(dstTableName)
-		} else {
+		case sql2doc:
+			dstID, err = dbb.dstDocumentDriver.LastID(dstTableName)
+		case sql2sql:
 			dstID, err = dbb.dstSQLDriver.LastID(dstTableName)
 		}
 		if err != nil {
@@ -677,9 +759,12 @@ func (dbb *DBBundle) fetchSQLHandler(intoFile bool) {
 							errors++
 						} else {
 							var last uint64
-							if intoFile {
+							switch dbb.direction {
+							case sql2file:
 								last, err = dbb.dstFileDriver.AddFromSQL(dstTableName, columns, data)
-							} else {
+							case sql2doc:
+								last, err = dbb.dstDocumentDriver.AddFromSQL(dstTableName, columns, data)
+							case sql2sql:
 								last, err = dbb.dstSQLDriver.Insert(dstTableName, columns, data)
 							}
 							if err != nil {
@@ -708,7 +793,7 @@ func (dbb *DBBundle) fetchSQLHandler(intoFile bool) {
 						dbb.errlog.Println("Close - Table:", table, err)
 						errors++
 					}
-					if intoFile {
+					if dbb.direction == sql2file {
 						err = dbb.dstFileDriver.Close()
 						if err != nil {
 							dbb.errlog.Println("Close files:", table, err)
