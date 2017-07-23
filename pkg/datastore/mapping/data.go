@@ -22,17 +22,19 @@ type Cursor struct {
 }
 
 // Decode updates pointers or markers from data
-func (c *Cursor) Decode(specification Fields, columns []string, values []interface{}) {
+func (c *Cursor) Decode(
+	specification Fields, renderMap *RenderMap, columns []string, values []interface{},
+) {
 	for _, cursor := range specification {
 		// Check cursor for ID field
 		if strings.ToLower(cursor.Topic) == "id" ||
 			(cursor.Topic == "" && strings.ToLower(cursor.Name) == "id") {
-			c.ID = RenderTxt(cursor, "", "", false, false, columns, values)
+			c.ID = renderMap.Render(cursor, columns, values)
 		}
 		// Check cursor for AT field
 		if strings.ToLower(cursor.Topic) == "at" ||
 			(cursor.Topic == "" && strings.ToLower(cursor.Name) == "at") {
-			c.AT = RenderTxt(cursor, "", "", false, false, columns, values)
+			c.AT = renderMap.Render(cursor, columns, values)
 		}
 	}
 }
@@ -67,46 +69,54 @@ func (f *Fields) RenderMapping() (mapping string) {
 	return
 }
 
-// RenderTxt generates plain text data
-func RenderTxt(
-	field Field, delimiter, finalizer string, useNames bool, quotas bool,
-	columns []string, values []interface{},
-) (data string) {
-	const (
-		timeTemplate = "2006-01-02 15:04:05"
-		dateTemplate = "2006-01-02"
-	)
-	dlm := delimiter
+// RenderMap setup renderer
+type RenderMap struct {
+	DateTemplate string
+	TimeTemplate string
+	Delimiter    string
+	Finalizer    string
+	UseNames     bool
+	Quotas       bool
+}
+
+// Renderer describes Render method
+type Renderer interface {
+	Render(field Field, columns []string, values []interface{}) (data string)
+}
+
+// Render generates data
+func (r *RenderMap) Render(field Field, columns []string, values []interface{}) (data string) {
+	dlm := r.Delimiter
 	for ndx, name := range columns {
 		if field.Name != "" && field.Name != name {
 			continue
 		}
 		if value, ok := values[ndx].([]byte); ok {
 			strValue := fmt.Sprintf(field.Format, string(value))
-			if quotas {
+			if r.Quotas {
 				strValue = "\"" + strings.NewReplacer(
 					"\"", "\\\"", "\\", "\\\\", "\n", "", "\r", "",
 				).Replace(fmt.Sprintf(field.Format, string(value))) + "\""
 			}
-			if useNames {
-				if quotas {
-					dlm = "\"" + name + "\"" + delimiter
+			if r.UseNames {
+				if r.Quotas {
+					dlm = "\"" + name + "\"" + r.Delimiter
 				} else {
-					dlm = name + delimiter
+					dlm = name + r.Delimiter
 				}
 			}
 			switch field.Type {
 			case "string":
 				data = data + dlm + strValue
 			case "date":
-				time, err := time.Parse(timeTemplate, string(value))
+				time, err := time.Parse(r.TimeTemplate, string(value))
 				if err != nil {
 					data = data + dlm + strValue
 				} else {
-					if quotas {
-						data = data + dlm + "\"" + fmt.Sprintf(field.Format, time.Format(dateTemplate)) + "\""
+					if r.Quotas {
+						data = data + dlm + "\"" + fmt.Sprintf(field.Format, time.Format(r.DateTemplate)) + "\""
 					} else {
-						data = data + dlm + fmt.Sprintf(field.Format, time.Format(dateTemplate))
+						data = data + dlm + fmt.Sprintf(field.Format, time.Format(r.DateTemplate))
 					}
 				}
 			case "time":
@@ -135,7 +145,7 @@ func RenderTxt(
 			default:
 				continue
 			}
-			data = data + finalizer
+			data = data + r.Finalizer
 		}
 	}
 
