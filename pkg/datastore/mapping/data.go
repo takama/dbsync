@@ -120,7 +120,16 @@ func (r *RenderMap) Render(field Field, columns []string, values []interface{}) 
 					}
 				}
 			case "time":
-				data = data + dlm + strValue
+				time, err := time.Parse(r.TimeTemplate, string(value))
+				if err != nil {
+					data = data + dlm + strValue
+				} else {
+					if r.Quotas {
+						data = data + dlm + "\"" + fmt.Sprintf(field.Format, time.Format(r.TimeTemplate)) + "\""
+					} else {
+						data = data + dlm + fmt.Sprintf(field.Format, time.Format(r.TimeTemplate))
+					}
+				}
 			case "int":
 				v, err := strconv.ParseInt(string(value), 10, 64)
 				if err != nil {
