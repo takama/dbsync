@@ -23,15 +23,19 @@ type File struct {
 	compression bool
 	extension   string
 	bucket      string
-	id          string
-	topics      []string
-	match       string
-	exclude     mapping.Fields
-	spec        mapping.Fields
-	path        mapping.Fields
-	name        mapping.Fields
-	header      mapping.Fields
-	columns     mapping.Fields
+
+	id           string
+	dateTemplate string
+	timeTemplate string
+
+	topics  []string
+	match   string
+	exclude mapping.Fields
+	spec    mapping.Fields
+	path    mapping.Fields
+	name    mapping.Fields
+	header  mapping.Fields
+	columns mapping.Fields
 
 	flow    map[string]binding.Stream
 	lastIDs map[string]idSpec
@@ -53,8 +57,9 @@ var ErrEmptyID = errors.New("Invalid ID data")
 
 // New creates file driver
 func New(
-	dataDir, bucket, id string, json, compression bool, topics []string,
-	extension, match string, exclude, spec, path, name, header, columns mapping.Fields,
+	dataDir, bucket, id, dateTemplate, timeTemplate string,
+	json, compression bool, topics []string, extension, match string,
+	exclude, spec, path, name, header, columns mapping.Fields,
 ) (db *File, err error) {
 	db = &File{
 		dataDir:     dataDir,
@@ -62,17 +67,21 @@ func New(
 		compression: compression,
 		extension:   extension,
 		bucket:      bucket,
-		id:          id,
-		topics:      topics,
-		match:       match,
-		exclude:     exclude,
-		spec:        spec,
-		path:        path,
-		name:        name,
-		header:      header,
-		columns:     columns,
-		flow:        make(map[string]binding.Stream),
-		lastIDs:     make(map[string]idSpec),
+
+		id:           id,
+		dateTemplate: dateTemplate,
+		timeTemplate: timeTemplate,
+
+		topics:  topics,
+		match:   match,
+		exclude: exclude,
+		spec:    spec,
+		path:    path,
+		name:    name,
+		header:  header,
+		columns: columns,
+		flow:    make(map[string]binding.Stream),
+		lastIDs: make(map[string]idSpec),
 	}
 	err = db.checkDatastorePath()
 	return
@@ -108,9 +117,13 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 			}
 		}
 	}
+	renderMap := &mapping.RenderMap{
+		DateTemplate: db.dateTemplate,
+		TimeTemplate: db.timeTemplate,
+	}
 	// Check filters
 	for _, field := range db.exclude {
-		if field.Topic == mapping.RenderTxt(field, "", "", false, false, columns, values) {
+		if field.Topic == renderMap.Render(field, columns, values) {
 			return
 		}
 	}
@@ -118,11 +131,12 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 
 		// Generate path
 		path := topic
+		renderMap.Delimiter = string(os.PathSeparator)
 		for _, field := range db.path {
 			if field.Topic != "" && field.Topic != topic {
 				continue
 			}
-			part := mapping.RenderTxt(field, string(os.PathSeparator), "", false, false, columns, values)
+			part := renderMap.Render(field, columns, values)
 			if part == string(os.PathSeparator) || part == "" {
 				return last, ErrInvalidPath
 			}
@@ -134,7 +148,7 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 			if field.Topic != "" && field.Topic != topic {
 				continue
 			}
-			path = path + mapping.RenderTxt(field, string(os.PathSeparator), "", false, false, columns, values)
+			path = path + renderMap.Render(field, columns, values)
 		}
 		if str := strings.Trim(db.extension, ". "); str != "" {
 			path = path + "." + str
@@ -142,23 +156,39 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 
 		// Generate header
 		data := "\n"
+		renderMap.Delimiter = " "
 		for _, field := range db.header {
 			if field.Topic != "" && field.Topic != topic {
 				continue
 			}
-			data = data + mapping.RenderTxt(field, " ", "", false, false, columns, values)
+			data = data + renderMap.Render(field, columns, values)
 		}
 		data = data + "\n" + strings.Repeat("=", len(data)) + "\n"
 
 		// Generate data columns
+		listMap := &mapping.RenderMap{
+			DateTemplate: db.dateTemplate,
+			TimeTemplate: db.timeTemplate,
+			Delimiter:    ": ",
+			Finalizer:    "\n",
+			UseNames:     true,
+		}
 		if len(db.columns) > 0 {
 			if db.json {
+				jsonMap := &mapping.RenderMap{
+					DateTemplate: db.dateTemplate,
+					TimeTemplate: db.timeTemplate,
+					Delimiter:    ": ",
+					Finalizer:    ", ",
+					UseNames:     true,
+					Quotas:       true,
+				}
 				data = data + "{"
 				for _, field := range db.columns {
 					if field.Topic != "" && field.Topic != topic {
 						continue
 					}
-					data = data + mapping.RenderTxt(field, ": ", ", ", true, true, columns, values)
+					data = data + jsonMap.Render(field, columns, values)
 				}
 				data = strings.Trim(data, ", ") + "}"
 			} else {
@@ -166,13 +196,12 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 					if field.Topic != "" && field.Topic != topic {
 						continue
 					}
-					data = data + mapping.RenderTxt(field, ": ", "\n", true, false, columns, values)
+					data = data + listMap.Render(field, columns, values)
 				}
 			}
 		} else {
-			data = data + mapping.RenderTxt(
-				mapping.Field{Type: "string", Format: "%s"},
-				": ", "\n", true, false, columns, values,
+			data = data + listMap.Render(
+				mapping.Field{Type: "string", Format: "%s"}, columns, values,
 			)
 		}
 
@@ -183,12 +212,13 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 		}
 	}
 
+	renderMap.Delimiter = ""
 	at := "0000-00-00"
 	// Check spec for AT field
 	for _, spec := range db.spec {
 		if strings.ToLower(spec.Topic) == "at" ||
 			(spec.Topic == "" && strings.ToLower(spec.Name) == "at") {
-			at = mapping.RenderTxt(spec, "", "", false, false, columns, values)
+			at = renderMap.Render(spec, columns, values)
 		}
 	}
 	// Save Last ID and AT

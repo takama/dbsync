@@ -15,7 +15,11 @@ import (
 type Elastic struct {
 	ctx context.Context
 	*es.Client
-	id      string
+
+	id           string
+	dateTemplate string
+	timeTemplate string
+
 	spec    mapping.Fields
 	indices mapping.Fields
 	include mapping.Fields
@@ -35,12 +39,16 @@ var ErrEmptyID = errors.New("Invalid ID data")
 
 // New creates Elastic driver
 func New(
-	host string, port uint64, id string,
+	host string, port uint64, id, dateTemplate, timeTemplate string,
 	spec, indices, include, exclude, columns mapping.Fields,
 ) (db *Elastic, err error) {
 	db = &Elastic{
-		ctx:     context.Background(),
-		id:      id,
+		ctx: context.Background(),
+
+		id:           id,
+		dateTemplate: dateTemplate,
+		timeTemplate: timeTemplate,
+
 		spec:    spec,
 		indices: indices,
 		include: include,
@@ -66,7 +74,11 @@ func (db *Elastic) LastID(document string) (id uint64, err error) {
 func (db *Elastic) AddFromSQL(document string, columns []string, values []interface{}) (last uint64, err error) {
 	// Get and decode cursor
 	cursor := db.getCursor(document)
-	cursor.Decode(db.spec, columns, values)
+	renderMap := &mapping.RenderMap{
+		DateTemplate: db.dateTemplate,
+		TimeTemplate: db.timeTemplate,
+	}
+	cursor.Decode(db.spec, renderMap, columns, values)
 
 	// Save cursor
 	db.cursors[document] = cursor
@@ -81,14 +93,14 @@ func (db *Elastic) AddFromSQL(document string, columns []string, values []interf
 	// Check filters
 	if len(db.include) == 0 {
 		for _, field := range db.exclude {
-			if field.Topic == mapping.RenderTxt(field, "", "", false, false, columns, values) {
+			if field.Topic == renderMap.Render(field, columns, values) {
 				return
 			}
 		}
 	} else {
 		found := false
 		for _, field := range db.include {
-			if field.Topic == mapping.RenderTxt(field, "", "", false, false, columns, values) {
+			if field.Topic == renderMap.Render(field, columns, values) {
 				found = true
 				break
 			}
@@ -98,9 +110,17 @@ func (db *Elastic) AddFromSQL(document string, columns []string, values []interf
 		}
 	}
 
+	jsonMap := &mapping.RenderMap{
+		DateTemplate: db.dateTemplate,
+		TimeTemplate: db.timeTemplate,
+		Delimiter:    ": ",
+		Finalizer:    ", ",
+		UseNames:     true,
+		Quotas:       true,
+	}
 	// Check index
 	for _, field := range db.indices {
-		index := mapping.RenderTxt(field, "", "", false, false, columns, values)
+		index := renderMap.Render(field, columns, values)
 		exist, err := db.IndexExists(index).Do(db.ctx)
 		if err != nil {
 			return last, err
@@ -120,7 +140,7 @@ func (db *Elastic) AddFromSQL(document string, columns []string, values []interf
 		if len(db.columns) > 0 {
 			data := "{"
 			for _, field := range db.columns {
-				data = data + mapping.RenderTxt(field, ": ", ", ", true, true, columns, values)
+				data = data + jsonMap.Render(field, columns, values)
 			}
 			data = strings.Trim(data, ", ") + "}"
 			_, err = db.Index().

@@ -97,6 +97,10 @@ type DBBundle struct {
 	srcFileDriver fileReplication
 	dstFileDriver fileReplication
 
+	// Date and Time templates
+	DateTemplate string `split_words:"true"`
+	TimeTemplate string `split_words:"true"`
+
 	// Documents/Tables names declaration
 	UpdateDocuments []string `split_words:"true"`
 	InsertDocuments []string `split_words:"true"`
@@ -271,7 +275,8 @@ func New() (*DBBundle, error) {
 		}
 	case "file":
 		bundle.srcFileDriver, err = file.New(
-			bundle.FileDataDir, bundle.SrcFileBucket, bundle.IDName,
+			bundle.FileDataDir, bundle.SrcFileBucket,
+			bundle.IDName, bundle.DateTemplate, bundle.TimeTemplate,
 			bundle.SrcFileJSON, bundle.SrcFileCompression, bundle.SrcFileTopics,
 			bundle.SrcFileExtension, bundle.SrcFileMatch, bundle.SrcFileExclude,
 			bundle.SrcFileSpec, bundle.SrcFilePath, bundle.SrcFileName,
@@ -284,12 +289,15 @@ func New() (*DBBundle, error) {
 	switch strings.ToLower(bundle.DstDriver) {
 	case "elastic":
 		bundle.dstDocumentDriver, err = elastic.New(
-			bundle.DstDbHost, bundle.DstDbPort, bundle.IDName, bundle.CursorSpec,
-			bundle.DstDocIndices, bundle.DstDocInclude, bundle.DstDocExclude, bundle.DstDocColumns,
+			bundle.DstDbHost, bundle.DstDbPort,
+			bundle.IDName, bundle.DateTemplate, bundle.TimeTemplate,
+			bundle.CursorSpec, bundle.DstDocIndices, bundle.DstDocInclude,
+			bundle.DstDocExclude, bundle.DstDocColumns,
 		)
 	case "b2":
 		bundle.dstFileDriver, err = b2.New(
-			bundle.DstAccountID, bundle.DstAccountKey, bundle.DstFileBucket, bundle.IDName,
+			bundle.DstAccountID, bundle.DstAccountKey, bundle.DstFileBucket,
+			bundle.IDName, bundle.DateTemplate, bundle.TimeTemplate,
 			bundle.DstFileJSON, bundle.DstFileCompression, bundle.DstFileTopics,
 			bundle.DstFileExtension, bundle.DstFileExclude, bundle.DstFileSpec, bundle.DstFilePath,
 			bundle.DstFileName, bundle.DstFileHeader, bundle.DstFileColumns,
@@ -326,7 +334,8 @@ func New() (*DBBundle, error) {
 		}
 	case "file":
 		bundle.dstFileDriver, err = file.New(
-			bundle.FileDataDir, bundle.DstFileBucket, bundle.IDName,
+			bundle.FileDataDir, bundle.DstFileBucket,
+			bundle.IDName, bundle.DateTemplate, bundle.TimeTemplate,
 			bundle.DstFileJSON, bundle.DstFileCompression, bundle.DstFileTopics,
 			bundle.DstFileExtension, bundle.DstFileMatch, bundle.DstFileExclude,
 			bundle.DstFileSpec, bundle.DstFilePath, bundle.DstFileName,
