@@ -47,6 +47,12 @@ func (db *Postgres) GetLimitedAfterID(table string, after, limit uint64) (*sql.R
 		strconv.FormatUint(after, 10) + " ORDER BY id ASC LIMIT " + strconv.FormatUint(limit, 10))
 }
 
+// GetLimitedBeforeID implements interface for getting limited table rows before specified ID
+func (db *Postgres) GetLimitedBeforeID(table string, before, limit uint64) (*sql.Rows, error) {
+	return db.driver.Query("SELECT * FROM " + table + " WHERE id < " +
+		strconv.FormatUint(before, 10) + " ORDER BY id DESC LIMIT " + strconv.FormatUint(limit, 10))
+}
+
 // Update implements interface for updating table rows
 func (db *Postgres) Update(table string, columns []string, values []interface{}) (count uint64, err error) {
 	var q []string

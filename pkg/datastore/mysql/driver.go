@@ -47,6 +47,12 @@ func (db *MySQL) GetLimitedAfterID(table string, after, limit uint64) (*sql.Rows
 		strconv.FormatUint(after, 10) + " ORDER BY ID ASC LIMIT " + strconv.FormatUint(limit, 10))
 }
 
+// GetLimitedBeforeID implements interface for getting limited table rows before specified ID
+func (db *MySQL) GetLimitedBeforeID(table string, before, limit uint64) (*sql.Rows, error) {
+	return db.driver.Query("SELECT * FROM " + table + " WHERE ID < " +
+		strconv.FormatUint(before, 10) + " ORDER BY ID DESC LIMIT " + strconv.FormatUint(limit, 10))
+}
+
 // Update implements interface for updating table rows
 func (db *MySQL) Update(table string, columns []string, values []interface{}) (count uint64, err error) {
 	var q []string
