@@ -72,7 +72,9 @@ func (f *Fields) RenderMapping() (mapping string) {
 // RenderMap setup renderer
 type RenderMap struct {
 	DateTemplate string
+	DateFormat   string
 	TimeTemplate string
+	TimeFormat   string
 	Delimiter    string
 	Finalizer    string
 	UseNames     bool
@@ -114,9 +116,9 @@ func (r *RenderMap) Render(field Field, columns []string, values []interface{}) 
 					data = data + dlm + strValue
 				} else {
 					if r.Quotas {
-						data = data + dlm + "\"" + fmt.Sprintf(field.Format, time.Format(r.DateTemplate)) + "\""
+						data = data + dlm + "\"" + fmt.Sprintf(field.Format, time.Format(r.DateFormat)) + "\""
 					} else {
-						data = data + dlm + fmt.Sprintf(field.Format, time.Format(r.DateTemplate))
+						data = data + dlm + fmt.Sprintf(field.Format, time.Format(r.DateFormat))
 					}
 				}
 			case "time":
@@ -125,9 +127,9 @@ func (r *RenderMap) Render(field Field, columns []string, values []interface{}) 
 					data = data + dlm + strValue
 				} else {
 					if r.Quotas {
-						data = data + dlm + "\"" + fmt.Sprintf(field.Format, time.Format(r.TimeTemplate)) + "\""
+						data = data + dlm + "\"" + fmt.Sprintf(field.Format, time.Format(r.TimeFormat)) + "\""
 					} else {
-						data = data + dlm + fmt.Sprintf(field.Format, time.Format(r.TimeTemplate))
+						data = data + dlm + fmt.Sprintf(field.Format, time.Format(r.TimeFormat))
 					}
 				}
 			case "int":
@@ -159,4 +161,27 @@ func (r *RenderMap) Render(field Field, columns []string, values []interface{}) 
 	}
 
 	return
+}
+
+// Skipped checks data for skipped records
+func Skipped(rendermap *RenderMap, include, exclude Fields, columns []string, values []interface{}) bool {
+	// Check filters
+	if len(include) == 0 {
+		for _, field := range exclude {
+			if field.Topic == rendermap.Render(field, columns, values) {
+				return true
+			}
+		}
+	} else {
+		for _, field := range include {
+			if field.Topic == rendermap.Render(field, columns, values) {
+				return false
+			}
+		}
+
+		return true
+	}
+
+	return false
+
 }
