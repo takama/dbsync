@@ -83,6 +83,14 @@ func (db *S3) LastID(bucket string) (id uint64, err error) {
 	return id, nil
 }
 
+// Cursor sets pointer
+func (db *S3) Cursor(
+	bucket string, renderMap *mapping.RenderMap, columns []string, values []interface{},
+) (last uint64, err error) {
+
+	return
+}
+
 // AddFromSQL implements interface for inserting data from SQL into bucket
 func (db *S3) AddFromSQL(bucket string, columns []string, values []interface{}) (last uint64, err error) {
 	return 0, ErrUnsupported

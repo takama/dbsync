@@ -16,15 +16,13 @@ type Elastic struct {
 	ctx context.Context
 	*es.Client
 
-	id           string
-	dateTemplate string
-	timeTemplate string
+	renderMap *mapping.RenderMap
 
-	spec    mapping.Fields
-	indices mapping.Fields
 	include mapping.Fields
 	exclude mapping.Fields
 	columns mapping.Fields
+	spec    mapping.Fields
+	indices mapping.Fields
 	cursors map[string]*mapping.Cursor
 }
 
@@ -39,21 +37,19 @@ var ErrEmptyID = errors.New("Invalid ID data")
 
 // New creates Elastic driver
 func New(
-	host string, port uint64, id, dateTemplate, timeTemplate string,
-	spec, indices, include, exclude, columns mapping.Fields,
+	host string, port uint64, renderMap *mapping.RenderMap,
+	include, exclude, columns, spec, indices mapping.Fields,
 ) (db *Elastic, err error) {
 	db = &Elastic{
 		ctx: context.Background(),
 
-		id:           id,
-		dateTemplate: dateTemplate,
-		timeTemplate: timeTemplate,
+		renderMap: renderMap,
 
-		spec:    spec,
-		indices: indices,
 		include: include,
 		exclude: exclude,
 		columns: columns,
+		spec:    spec,
+		indices: indices,
 		cursors: make(map[string]*mapping.Cursor),
 	}
 	db.Client, err = es.NewClient(es.SetURL(fmt.Sprintf("http://%s:%d", host, port)))
@@ -70,14 +66,12 @@ func (db *Elastic) LastID(document string) (id uint64, err error) {
 	return v, nil
 }
 
-// AddFromSQL implements interface for inserting data from SQL into ElasticSearch
-func (db *Elastic) AddFromSQL(document string, columns []string, values []interface{}) (last uint64, err error) {
+// Cursor sets pointer
+func (db *Elastic) Cursor(
+	document string, renderMap *mapping.RenderMap, columns []string, values []interface{},
+) (last uint64, err error) {
 	// Get and decode cursor
 	cursor := db.getCursor(document)
-	renderMap := &mapping.RenderMap{
-		DateTemplate: db.dateTemplate,
-		TimeTemplate: db.timeTemplate,
-	}
 	cursor.Decode(db.spec, renderMap, columns, values)
 
 	// Save cursor
@@ -90,37 +84,26 @@ func (db *Elastic) AddFromSQL(document string, columns []string, values []interf
 		return last, ErrEmptyID
 	}
 
-	// Check filters
-	if len(db.include) == 0 {
-		for _, field := range db.exclude {
-			if field.Topic == renderMap.Render(field, columns, values) {
-				return
-			}
-		}
-	} else {
-		found := false
-		for _, field := range db.include {
-			if field.Topic == renderMap.Render(field, columns, values) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return
-		}
-	}
+	return
+}
 
-	jsonMap := &mapping.RenderMap{
-		DateTemplate: db.dateTemplate,
-		TimeTemplate: db.timeTemplate,
-		Delimiter:    ": ",
-		Finalizer:    ", ",
-		UseNames:     true,
-		Quotas:       true,
+// AddFromSQL implements interface for inserting data from SQL into ElasticSearch
+func (db *Elastic) AddFromSQL(document string, columns []string, values []interface{}) (last uint64, err error) {
+
+	last, err = db.Cursor(document, db.renderMap, columns, values)
+	if err != nil {
+		return
 	}
+	jsonMap := new(mapping.RenderMap)
+	*jsonMap = *db.renderMap
+	jsonMap.Delimiter = ": "
+	jsonMap.Finalizer = ", "
+	jsonMap.UseNames = true
+	jsonMap.Quotas = true
+
 	// Check index
 	for _, field := range db.indices {
-		index := renderMap.Render(field, columns, values)
+		index := db.renderMap.Render(field, columns, values)
 		exist, err := db.IndexExists(index).Do(db.ctx)
 		if err != nil {
 			return last, err

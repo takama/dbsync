@@ -94,6 +94,14 @@ func (db *B2) LastID(bucket string) (id uint64, err error) {
 	return id, nil
 }
 
+// Cursor sets pointer
+func (db *B2) Cursor(
+	bucket string, renderMap *mapping.RenderMap, columns []string, values []interface{},
+) (last uint64, err error) {
+
+	return
+}
+
 // AddFromSQL implements interface for inserting data from SQL into bucket
 func (db *B2) AddFromSQL(bucket string, columns []string, values []interface{}) (last uint64, err error) {
 	bkt, err := db.getOrCreateBucket(db.bucketName(bucket))
