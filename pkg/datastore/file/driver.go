@@ -18,28 +18,30 @@ import (
 
 // File driver
 type File struct {
-	dataDir     string
+	renderMap *mapping.RenderMap
+
+	include mapping.Fields
+	exclude mapping.Fields
+	columns mapping.Fields
+	extras  mapping.Fields
+	spec    mapping.Fields
+	idName  string
+	atName  string
+	cursors map[string]*mapping.Cursor
+
+	dataDir string
+
 	json        bool
 	compression bool
 	extension   string
 	bucket      string
-	id          string
 	topics      []string
 	match       string
-	exclude     mapping.Fields
-	spec        mapping.Fields
 	path        mapping.Fields
 	name        mapping.Fields
 	header      mapping.Fields
-	columns     mapping.Fields
 
-	flow    map[string]binding.Stream
-	lastIDs map[string]idSpec
-}
-
-type idSpec struct {
-	ID uint64
-	AT string
+	flow map[string]binding.Stream
 }
 
 // ErrUnsupported declares error for unsupported methods
@@ -53,26 +55,35 @@ var ErrEmptyID = errors.New("Invalid ID data")
 
 // New creates file driver
 func New(
-	dataDir, bucket, id string, json, compression bool, topics []string,
-	extension, match string, exclude, spec, path, name, header, columns mapping.Fields,
+	renderMap *mapping.RenderMap, include, exclude, columns, extras, spec mapping.Fields,
+	idName, atName, dataDir string, json, compression bool, extension, bucket string,
+	topics []string, match string, path, name, header mapping.Fields,
 ) (db *File, err error) {
 	db = &File{
-		dataDir:     dataDir,
+		renderMap: renderMap,
+
+		include: include,
+		exclude: exclude,
+		columns: columns,
+		extras:  extras,
+		spec:    spec,
+		idName:  idName,
+		atName:  atName,
+		cursors: make(map[string]*mapping.Cursor),
+
+		dataDir: dataDir,
+
 		json:        json,
 		compression: compression,
 		extension:   extension,
 		bucket:      bucket,
-		id:          id,
 		topics:      topics,
 		match:       match,
-		exclude:     exclude,
-		spec:        spec,
 		path:        path,
 		name:        name,
 		header:      header,
-		columns:     columns,
-		flow:        make(map[string]binding.Stream),
-		lastIDs:     make(map[string]idSpec),
+
+		flow: make(map[string]binding.Stream),
 	}
 	err = db.checkDatastorePath()
 	return
@@ -80,41 +91,53 @@ func New(
 
 // LastID implements interface for getting last ID in datastore bucket
 func (db *File) LastID(bucket string) (id uint64, err error) {
-	is, ok := db.lastIDs[bucket]
-	if ok {
-		return is.ID, nil
-	}
-	id, at, err := db.lastID(bucket)
+	cursor, err := db.getCursor(bucket)
 	if err != nil {
 		return
 	}
-	db.lastIDs[bucket] = idSpec{ID: id, AT: at}
+	v, err := strconv.ParseUint(string(cursor.ID), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return v, nil
+}
+
+// Cursor sets pointer
+func (db *File) Cursor(
+	bucket string, renderMap *mapping.RenderMap, columns []string, values []interface{},
+) (last uint64, err error) {
+	// Get and decode cursor
+	cursor, err := db.getCursor(bucket)
+	if err != nil {
+		return
+	}
+	cursor.Decode(db.spec, db.idName, db.atName, renderMap, columns, values)
+
+	// Save cursor
+	db.cursors[bucket] = cursor
+	last, err = strconv.ParseUint(cursor.ID, 10, 64)
+	if err != nil {
+		return
+	}
+	if last == 0 {
+		return last, ErrEmptyID
+	}
+
 	return
 }
 
 // AddFromSQL implements interface for inserting data from SQL into bucket
 func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}) (last uint64, err error) {
 	// Get last ID
-	for ndx, name := range columns {
-		if name == db.id {
-			if value, ok := values[ndx].([]byte); ok {
-				last, err = strconv.ParseUint(string(value), 10, 64)
-				if err != nil {
-					return
-				}
-				if last == 0 {
-					return last, ErrEmptyID
-				}
-			}
-		}
-	}
-	// Check filters
-	for _, field := range db.exclude {
-		if field.Topic == mapping.Render(field, "", "", false, false, columns, values) {
-			return
-		}
+	last, err = db.Cursor(bucket, db.renderMap, columns, values)
+	if err != nil {
+		return
 	}
 	for _, topic := range db.topics {
+
+		renderMap := new(mapping.RenderMap)
+		*renderMap = *db.renderMap
+		renderMap.Delimiter = string(os.PathSeparator)
 
 		// Generate path
 		path := topic
@@ -122,7 +145,7 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 			if field.Topic != "" && field.Topic != topic {
 				continue
 			}
-			part := mapping.Render(field, string(os.PathSeparator), "", false, false, columns, values)
+			part := renderMap.Render(field, columns, values)
 			if part == string(os.PathSeparator) || part == "" {
 				return last, ErrInvalidPath
 			}
@@ -134,7 +157,7 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 			if field.Topic != "" && field.Topic != topic {
 				continue
 			}
-			path = path + mapping.Render(field, string(os.PathSeparator), "", false, false, columns, values)
+			path = path + renderMap.Render(field, columns, values)
 		}
 		if str := strings.Trim(db.extension, ". "); str != "" {
 			path = path + "." + str
@@ -142,38 +165,64 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 
 		// Generate header
 		data := "\n"
+		renderMap.Delimiter = " "
 		for _, field := range db.header {
 			if field.Topic != "" && field.Topic != topic {
 				continue
 			}
-			data = data + mapping.Render(field, " ", "", false, false, columns, values)
+			data = data + renderMap.Render(field, columns, values)
 		}
 		data = data + "\n" + strings.Repeat("=", len(data)) + "\n"
 
 		// Generate data columns
+		listMap := new(mapping.RenderMap)
+		*listMap = *db.renderMap
+		listMap.Delimiter = ": "
+		listMap.Finalizer = "\n"
+		listMap.UseNames = true
 		if len(db.columns) > 0 {
 			if db.json {
+				jsonMap := new(mapping.RenderMap)
+				*jsonMap = *db.renderMap
+				jsonMap.Delimiter = ": "
+				jsonMap.Finalizer = ", "
+				jsonMap.UseNames = true
+				jsonMap.Quotas = true
+				jsonMap.Extras = false
 				data = data + "{"
 				for _, field := range db.columns {
 					if field.Topic != "" && field.Topic != topic {
 						continue
 					}
-					data = data + mapping.Render(field, ": ", ", ", true, true, columns, values)
+					data = data + jsonMap.Render(field, columns, values)
+				}
+				jsonMap.Extras = true
+				for _, field := range db.extras {
+					data = data + jsonMap.Render(field, columns, values)
 				}
 				data = strings.Trim(data, ", ") + "}"
 			} else {
+				listMap.Extras = false
 				for _, field := range db.columns {
 					if field.Topic != "" && field.Topic != topic {
 						continue
 					}
-					data = data + mapping.Render(field, ": ", "\n", true, false, columns, values)
+					data = data + listMap.Render(field, columns, values)
+				}
+				listMap.Extras = true
+				for _, field := range db.extras {
+					data = data + listMap.Render(field, columns, values)
 				}
 			}
 		} else {
-			data = data + mapping.Render(
-				mapping.Field{Type: "string", Format: "%s"},
-				": ", "\n", true, false, columns, values,
+			listMap.Extras = false
+			data = data + listMap.Render(
+				mapping.Field{Type: "string", Format: "%s"}, columns, values,
 			)
+			listMap.Extras = true
+			for _, field := range db.extras {
+				data = data + listMap.Render(field, columns, values)
+			}
 		}
 
 		// Save data
@@ -183,16 +232,6 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 		}
 	}
 
-	at := "0000-00-00"
-	// Check spec for AT field
-	for _, spec := range db.spec {
-		if strings.ToLower(spec.Topic) == "at" ||
-			(spec.Topic == "" && strings.ToLower(spec.Name) == "at") {
-			at = mapping.Render(spec, "", "", false, false, columns, values)
-		}
-	}
-	// Save Last ID and AT
-	db.lastIDs[bucket] = idSpec{ID: last, AT: at}
 	return
 }
 
@@ -202,8 +241,8 @@ func (db *File) Close() (err error) {
 	if err != nil {
 		return
 	}
-	for bucket := range db.lastIDs {
-		err = db.saveLastID(bucket)
+	for bucket := range db.cursors {
+		err = db.saveCursor(bucket)
 		if err != nil {
 			return err
 		}
@@ -213,7 +252,7 @@ func (db *File) Close() (err error) {
 
 // GetFiles should collect
 func (db *File) GetFiles(path string, fileCount int) (collection map[string]binding.Stream, err error) {
-	id, at, err := db.lastID(db.bucket)
+	cursor, err := db.getCursor(db.bucket)
 	if err != nil {
 		return
 	}
@@ -221,11 +260,11 @@ func (db *File) GetFiles(path string, fileCount int) (collection map[string]bind
 	var excludes []string
 	var errSkip = fmt.Errorf("Skip over files")
 	for _, f := range db.exclude {
-		if strings.ToLower(f.Name) == "id" {
-			excludes = append(excludes, fmt.Sprintf(f.Format, id))
+		if strings.ToLower(f.Name) == db.idName {
+			excludes = append(excludes, fmt.Sprintf(f.Format, cursor.ID))
 		}
-		if strings.ToLower(f.Name) == "at" {
-			excludes = append(excludes, fmt.Sprintf(f.Format, at))
+		if strings.ToLower(f.Name) == db.atName {
+			excludes = append(excludes, fmt.Sprintf(f.Format, cursor.AT))
 		}
 	}
 	err = filepath.Walk(
@@ -319,6 +358,42 @@ func (db *File) Remove(path string) error {
 	return os.Remove(path)
 }
 
+func (db *File) getCursor(bucket string) (cursor *mapping.Cursor, err error) {
+	cursor, ok := db.cursors[bucket]
+	if ok {
+		return
+	}
+	cursor = &mapping.Cursor{
+		ID: "0",
+		AT: "0000-00-00",
+	}
+	path := db.dataDir + string(os.PathSeparator) + db.bucketName(bucket)
+	_, err = os.Stat(path)
+	if os.IsNotExist(err) {
+		if err = os.Mkdir(path, os.ModeDir|0755); err != nil {
+			return
+		}
+	}
+	idPath := path + string(os.PathSeparator) + "cursor"
+	_, err = os.Stat(idPath)
+	// if file does not exist, return "0" without error
+	if os.IsNotExist(err) {
+		return cursor, nil
+	}
+	file, err := os.OpenFile(idPath, os.O_RDONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	err = json.NewDecoder(bufio.NewReader(file)).Decode(cursor)
+	if err != nil {
+		return
+	}
+
+	db.cursors[bucket] = cursor
+	return
+}
+
 func (db *File) bucketName(bucket string) string {
 	if db.bucket != "" {
 		return db.bucket
@@ -371,49 +446,19 @@ func (db *File) save(bucket, path, data string) error {
 	return nil
 }
 
-func (db *File) saveLastID(bucket string) error {
-	path := db.dataDir + string(os.PathSeparator) + db.bucketName(bucket) + string(os.PathSeparator) + "lastID"
+func (db *File) saveCursor(bucket string) error {
+	path := db.dataDir + string(os.PathSeparator) + db.bucketName(bucket) + string(os.PathSeparator) + "cursor"
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 	fileWriter := bufio.NewWriter(file)
-	err = json.NewEncoder(fileWriter).Encode(db.lastIDs[bucket])
+	err = json.NewEncoder(fileWriter).Encode(db.cursors[bucket])
 	if err == nil {
 		fileWriter.Flush()
 	}
 	return err
-}
-
-func (db *File) lastID(bucket string) (id uint64, at string, err error) {
-	path := db.dataDir + string(os.PathSeparator) + db.bucketName(bucket)
-	_, err = os.Stat(path)
-	if os.IsNotExist(err) {
-		if err := os.Mkdir(path, os.ModeDir|0755); err != nil {
-			return 0, "", err
-		}
-	}
-	idPath := path + string(os.PathSeparator) + "lastID"
-	_, err = os.Stat(idPath)
-	// if file does not exist, return "0" without error
-	if os.IsNotExist(err) {
-		return 0, "", nil
-	}
-	file, err := os.OpenFile(idPath, os.O_RDONLY, 0644)
-	if err != nil {
-		return 0, "", err
-	}
-	defer file.Close()
-	var data struct {
-		ID uint64
-		AT string
-	}
-	err = json.NewDecoder(bufio.NewReader(file)).Decode(&data)
-	if err != nil {
-		return 0, "", err
-	}
-	return data.ID, data.AT, nil
 }
 
 // checkDatastorePath - checks if not exists datastore file try to create it
