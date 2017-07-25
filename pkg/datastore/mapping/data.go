@@ -79,6 +79,7 @@ type RenderMap struct {
 	Finalizer    string
 	UseNames     bool
 	Quotas       bool
+	Extras       bool
 }
 
 // Renderer describes Render method
@@ -88,77 +89,94 @@ type Renderer interface {
 
 // Render generates data
 func (r *RenderMap) Render(field Field, columns []string, values []interface{}) (data string) {
-	dlm := r.Delimiter
+	var extrasFound bool
 	for ndx, name := range columns {
 		if field.Name != "" && field.Name != name {
 			continue
 		}
-		if value, ok := values[ndx].([]byte); ok {
-			strValue := fmt.Sprintf(field.Format, string(value))
-			if r.Quotas {
-				strValue = "\"" + strings.NewReplacer(
-					"\"", "\\\"", "\\", "\\\\", "\n", "", "\r", "",
-				).Replace(fmt.Sprintf(field.Format, string(value))) + "\""
-			}
-			if r.UseNames {
-				if r.Quotas {
-					dlm = "\"" + name + "\"" + r.Delimiter
-				} else {
-					dlm = name + r.Delimiter
-				}
-			}
-			switch field.Type {
-			case "string":
-				data = data + dlm + strValue
-			case "date":
-				time, err := time.Parse(r.TimeTemplate, string(value))
-				if err != nil {
-					data = data + dlm + strValue
-				} else {
-					if r.Quotas {
-						data = data + dlm + "\"" + fmt.Sprintf(field.Format, time.Format(r.DateFormat)) + "\""
-					} else {
-						data = data + dlm + fmt.Sprintf(field.Format, time.Format(r.DateFormat))
-					}
-				}
-			case "time":
-				time, err := time.Parse(r.TimeTemplate, string(value))
-				if err != nil {
-					data = data + dlm + strValue
-				} else {
-					if r.Quotas {
-						data = data + dlm + "\"" + fmt.Sprintf(field.Format, time.Format(r.TimeFormat)) + "\""
-					} else {
-						data = data + dlm + fmt.Sprintf(field.Format, time.Format(r.TimeFormat))
-					}
-				}
-			case "int":
-				v, err := strconv.ParseInt(string(value), 10, 64)
-				if err != nil {
-					data = data + dlm + strValue
-				} else {
-					data = data + dlm + fmt.Sprintf(field.Format, v)
-				}
-			case "float":
-				v, err := strconv.ParseFloat(string(value), 32)
-				if err != nil {
-					data = data + dlm + strValue
-				} else {
-					data = data + dlm + fmt.Sprintf(field.Format, v)
-				}
-			case "bool":
-				v, err := strconv.ParseBool(string(value))
-				if err != nil {
-					data = data + dlm + strValue
-				} else {
-					data = data + dlm + fmt.Sprintf(field.Format, v)
-				}
-			default:
+		if r.Extras {
+			extrasFound = true
+			if field.Topic == "" {
 				continue
 			}
-			data = data + r.Finalizer
+			name = field.Topic
+		}
+		if v, ok := values[ndx].([]byte); ok {
+			data = data + r.parse(string(v), name, field.Type, field.Format)
 		}
 	}
+	if r.Extras && !extrasFound {
+		data = data + r.parse(field.Name, field.Topic, field.Type, field.Format)
+	}
+
+	return
+}
+
+func (r *RenderMap) parse(value, name, fieldType, format string) (data string) {
+	strValue := fmt.Sprintf(format, value)
+	dlm := r.Delimiter
+	if r.Quotas {
+		strValue = "\"" + strings.NewReplacer(
+			"\"", "\\\"", "\\", "\\\\", "\n", "", "\r", "",
+		).Replace(fmt.Sprintf(format, value)) + "\""
+	}
+	if r.UseNames {
+		if r.Quotas {
+			dlm = "\"" + name + "\"" + r.Delimiter
+		} else {
+			dlm = name + r.Delimiter
+		}
+	}
+	switch fieldType {
+	case "string":
+		data = data + dlm + strValue
+	case "date":
+		time, err := time.Parse(r.TimeTemplate, string(value))
+		if err != nil {
+			data = data + dlm + strValue
+		} else {
+			if r.Quotas {
+				data = data + dlm + "\"" + fmt.Sprintf(format, time.Format(r.DateFormat)) + "\""
+			} else {
+				data = data + dlm + fmt.Sprintf(format, time.Format(r.DateFormat))
+			}
+		}
+	case "time":
+		time, err := time.Parse(r.TimeTemplate, string(value))
+		if err != nil {
+			data = data + dlm + strValue
+		} else {
+			if r.Quotas {
+				data = data + dlm + "\"" + fmt.Sprintf(format, time.Format(r.TimeFormat)) + "\""
+			} else {
+				data = data + dlm + fmt.Sprintf(format, time.Format(r.TimeFormat))
+			}
+		}
+	case "int":
+		v, err := strconv.ParseInt(string(value), 10, 64)
+		if err != nil {
+			data = data + dlm + strValue
+		} else {
+			data = data + dlm + fmt.Sprintf(format, v)
+		}
+	case "float":
+		v, err := strconv.ParseFloat(string(value), 32)
+		if err != nil {
+			data = data + dlm + strValue
+		} else {
+			data = data + dlm + fmt.Sprintf(format, v)
+		}
+	case "bool":
+		v, err := strconv.ParseBool(string(value))
+		if err != nil {
+			data = data + dlm + strValue
+		} else {
+			data = data + dlm + fmt.Sprintf(format, v)
+		}
+	default:
+		return
+	}
+	data = data + r.Finalizer
 
 	return
 }
