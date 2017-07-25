@@ -23,12 +23,13 @@ import (
 
 type syncType int
 
-// synchronization types
+// supported synchronization types
 const (
 	sql2sql syncType = iota
 	sql2file
 	sql2doc
 	file2file
+	file2storage
 )
 
 // DBHandler provide a simple handler interface for DB
@@ -55,6 +56,7 @@ type sqlReplication interface {
 	GetByID(table string, ID interface{}) (*sql.Row, error)
 	GetLimited(table string, limit uint64) (*sql.Rows, error)
 	GetLimitedAfterID(table string, after, limit uint64) (*sql.Rows, error)
+	GetLimitedBeforeID(table string, before, limit uint64) (*sql.Rows, error)
 	Update(table string, columns []string, values []interface{}) (count uint64, err error)
 	Insert(table string, columns []string, values []interface{}) (lastID uint64, err error)
 	Close() error
@@ -62,16 +64,23 @@ type sqlReplication interface {
 
 type documentReplication interface {
 	LastID(document string) (uint64, error)
+	Cursor(document string, renderMap *mapping.RenderMap, columns []string, values []interface{}) (lastID uint64, err error)
 	AddFromSQL(document string, columns []string, values []interface{}) (lastID uint64, err error)
 	Close() error
 }
 
 type fileReplication interface {
 	LastID(bucket string) (uint64, error)
+	Cursor(bucket string, renderMap *mapping.RenderMap, columns []string, values []interface{}) (lastID uint64, err error)
 	AddFromSQL(bucket string, columns []string, values []interface{}) (lastID uint64, err error)
 	GetFiles(path string, fileCount int) (collection map[string]binding.Stream, err error)
 	PutFile(path string, stream binding.Stream) error
 	Remove(path string) error
+	Close() error
+}
+
+type storageReplication interface {
+	PutFile(path string, stream binding.Stream) error
 	Close() error
 }
 
@@ -97,9 +106,15 @@ type DBBundle struct {
 	srcFileDriver fileReplication
 	dstFileDriver fileReplication
 
-	// Date and Time templates
+	// Storage drivers interfaces
+	srcStorageDriver storageReplication
+	dstStorageDriver storageReplication
+
+	// Date and Time templates and formats
 	DateTemplate string `split_words:"true"`
+	DateFormat   string `split_words:"true"`
 	TimeTemplate string `split_words:"true"`
+	TimeFormat   string `split_words:"true"`
 
 	// Documents/Tables names declaration
 	UpdateDocuments []string `split_words:"true"`
@@ -107,11 +122,20 @@ type DBBundle struct {
 	DocumentsPrefix string   `split_words:"true"`
 	DocumentsSuffix string   `split_words:"true"`
 
+	// Include or exclude records/files etc
+	Include mapping.Fields `split_words:"true"`
+	Exclude mapping.Fields `split_words:"true"`
+
+	// Described data columns and additional data columns
+	Columns mapping.Fields `split_words:"true"`
+	Extras  mapping.Fields `split_words:"true"`
+
 	// Cursor synchronization specification
 	CursorSpec mapping.Fields `split_words:"true"`
 
 	// ID pointer management
 	IDName       string `envconfig:"DBSYNC_ID_NAME"`
+	ATName       string `envconfig:"DBSYNC_AT_NAME"`
 	StartAfterID uint64 `split_words:"true"`
 	StopBeforeID uint64 `split_words:"true"`
 	Reverse      bool   `split_words:"true"`
@@ -127,8 +151,23 @@ type DBBundle struct {
 	// Count of documents for operations
 	DocumentsSyncCount int `split_words:"true"`
 
+	// Documents replication destination environments
+	DocIndices mapping.Fields `split_words:"true"`
+
 	// File data directory
 	FileDataDir string `split_words:"true"`
+
+	// File replication source environments
+	FileJSON        bool           `split_words:"true"`
+	FileCompression bool           `split_words:"true"`
+	FileRemove      bool           `split_words:"true"`
+	FileExtension   string         `split_words:"true"`
+	FileBucket      string         `split_words:"true"`
+	FileTopics      []string       `split_words:"true"`
+	FileMatch       string         `split_words:"true"`
+	FilePath        mapping.Fields `split_words:"true"`
+	FileName        mapping.Fields `split_words:"true"`
+	FileHeader      mapping.Fields `split_words:"true"`
 
 	// Source driver type
 	SrcDriver string `split_words:"true" required:"true"`
@@ -146,21 +185,6 @@ type DBBundle struct {
 	SrcAccountKey    string `split_words:"true"`
 	SrcAccountToken  string `split_words:"true"`
 
-	// File replication source environments
-	SrcFileJSON        bool           `split_words:"true"`
-	SrcFileCompression bool           `split_words:"true"`
-	SrcFileRemove      bool           `split_words:"true"`
-	SrcFileExtension   string         `split_words:"true"`
-	SrcFileBucket      string         `split_words:"true"`
-	SrcFileTopics      []string       `split_words:"true"`
-	SrcFileMatch       string         `split_words:"true"`
-	SrcFileExclude     mapping.Fields `split_words:"true"`
-	SrcFileSpec        mapping.Fields `split_words:"true"`
-	SrcFilePath        mapping.Fields `split_words:"true"`
-	SrcFileName        mapping.Fields `split_words:"true"`
-	SrcFileHeader      mapping.Fields `split_words:"true"`
-	SrcFileColumns     mapping.Fields `split_words:"true"`
-
 	// Destination driver type
 	DstDriver string `split_words:"true" required:"true"`
 
@@ -176,27 +200,10 @@ type DBBundle struct {
 	DstAccountID     string `split_words:"true"`
 	DstAccountKey    string `split_words:"true"`
 	DstAccountToken  string `split_words:"true"`
-
-	// File replication destination environments
-	DstFileJSON        bool           `split_words:"true"`
-	DstFileCompression bool           `split_words:"true"`
-	DstFileExtension   string         `split_words:"true"`
-	DstFileBucket      string         `split_words:"true"`
-	DstFileTopics      []string       `split_words:"true"`
-	DstFileMatch       string         `split_words:"true"`
-	DstFileExclude     mapping.Fields `split_words:"true"`
-	DstFileSpec        mapping.Fields `split_words:"true"`
-	DstFilePath        mapping.Fields `split_words:"true"`
-	DstFileName        mapping.Fields `split_words:"true"`
-	DstFileHeader      mapping.Fields `split_words:"true"`
-	DstFileColumns     mapping.Fields `split_words:"true"`
-
-	// Documents replication destination environments
-	DstDocIndices mapping.Fields `split_words:"true"`
-	DstDocInclude mapping.Fields `split_words:"true"`
-	DstDocExclude mapping.Fields `split_words:"true"`
-	DstDocColumns mapping.Fields `split_words:"true"`
 }
+
+// ErrUnsupported declares error for unsupported methods
+var ErrUnsupported = errors.New("Unsupported synchronization type")
 
 // ErrUnsupportedFileToSQL declares error for unsupported methods
 var ErrUnsupportedFileToSQL = errors.New("Unsupported synchronization from file to SQL data")
@@ -204,14 +211,8 @@ var ErrUnsupportedFileToSQL = errors.New("Unsupported synchronization from file 
 // ErrUnsupportedFileToDocument declares error for unsupported methods
 var ErrUnsupportedFileToDocument = errors.New("Unsupported synchronization from file to Document")
 
-// ErrUnsupportedDocumentToSQL declares error for unsupported methods
-var ErrUnsupportedDocumentToSQL = errors.New("Unsupported synchronization from document to SQL data")
-
-// ErrUnsupportedDocumentToFile declares error for unsupported methods
-var ErrUnsupportedDocumentToFile = errors.New("Unsupported synchronization from document to file")
-
-// ErrUnsupportedDocumentToDocument declares error for unsupported methods
-var ErrUnsupportedDocumentToDocument = errors.New("Unsupported synchronization from document to document")
+// ErrUnsupportedSQLToStorage declares error for unsupported methods
+var ErrUnsupportedSQLToStorage = errors.New("Unsupported synchronization from SQL to Data Store")
 
 // ErrNothingToSyncSource declares error if unspecified source driver
 var ErrNothingToSyncSource = errors.New("Nothing to sync, please specify source driver")
@@ -233,21 +234,11 @@ func New() (*DBBundle, error) {
 		return nil, err
 	}
 
-	for _, table := range bundle.UpdateDocuments {
-		if !bundle.exists(table) {
-			bundle.status = append(bundle.status, Status{Table: table})
-		}
-	}
-	for _, table := range bundle.InsertDocuments {
-		if !bundle.exists(table) {
-			bundle.status = append(bundle.status, Status{Table: table})
-		}
-	}
-
-	for _, topic := range bundle.SrcFileTopics {
-		if !bundle.exists(topic) {
-			bundle.status = append(bundle.status, Status{Table: topic})
-		}
+	renderMap := &mapping.RenderMap{
+		DateTemplate: bundle.DateTemplate,
+		DateFormat:   bundle.DateFormat,
+		TimeTemplate: bundle.TimeTemplate,
+		TimeFormat:   bundle.TimeFormat,
 	}
 
 	switch strings.ToLower(bundle.SrcDriver) {
@@ -275,12 +266,11 @@ func New() (*DBBundle, error) {
 		}
 	case "file":
 		bundle.srcFileDriver, err = file.New(
-			bundle.FileDataDir, bundle.SrcFileBucket,
-			bundle.IDName, bundle.DateTemplate, bundle.TimeTemplate,
-			bundle.SrcFileJSON, bundle.SrcFileCompression, bundle.SrcFileTopics,
-			bundle.SrcFileExtension, bundle.SrcFileMatch, bundle.SrcFileExclude,
-			bundle.SrcFileSpec, bundle.SrcFilePath, bundle.SrcFileName,
-			bundle.SrcFileHeader, bundle.SrcFileColumns,
+			renderMap, bundle.Include, bundle.Exclude, bundle.Columns, bundle.Extras,
+			bundle.CursorSpec, bundle.IDName, bundle.ATName, bundle.FileDataDir,
+			bundle.FileJSON, bundle.FileCompression, bundle.FileExtension,
+			bundle.FileBucket, bundle.FileTopics, bundle.FileMatch,
+			bundle.FilePath, bundle.FileName, bundle.FileHeader,
 		)
 		if err != nil {
 			return bundle, err
@@ -289,29 +279,22 @@ func New() (*DBBundle, error) {
 	switch strings.ToLower(bundle.DstDriver) {
 	case "elastic":
 		bundle.dstDocumentDriver, err = elastic.New(
-			bundle.DstDbHost, bundle.DstDbPort,
-			bundle.IDName, bundle.DateTemplate, bundle.TimeTemplate,
-			bundle.CursorSpec, bundle.DstDocIndices, bundle.DstDocInclude,
-			bundle.DstDocExclude, bundle.DstDocColumns,
+			bundle.DstDbHost, bundle.DstDbPort, renderMap,
+			bundle.Columns, bundle.Extras, bundle.DocIndices,
+			bundle.CursorSpec, bundle.IDName, bundle.ATName,
 		)
 	case "b2":
-		bundle.dstFileDriver, err = b2.New(
-			bundle.DstAccountID, bundle.DstAccountKey, bundle.DstFileBucket,
-			bundle.IDName, bundle.DateTemplate, bundle.TimeTemplate,
-			bundle.DstFileJSON, bundle.DstFileCompression, bundle.DstFileTopics,
-			bundle.DstFileExtension, bundle.DstFileExclude, bundle.DstFileSpec, bundle.DstFilePath,
-			bundle.DstFileName, bundle.DstFileHeader, bundle.DstFileColumns,
+		bundle.dstStorageDriver, err = b2.New(
+			bundle.DstAccountID, bundle.DstAccountKey,
+			bundle.FileCompression, bundle.FileExtension, bundle.FileBucket,
 		)
 		if err != nil {
 			return bundle, err
 		}
 	case "s3":
-		bundle.dstFileDriver, err = s3.New(
+		bundle.dstStorageDriver, err = s3.New(
 			bundle.DstAccountRegion, bundle.DstAccountID, bundle.DstAccountKey,
-			bundle.DstAccountToken, bundle.DstFileBucket, bundle.IDName,
-			bundle.DstFileJSON, bundle.DstFileCompression, bundle.DstFileTopics,
-			bundle.DstFileExtension, bundle.DstFileExclude, bundle.DstFileSpec, bundle.DstFilePath,
-			bundle.DstFileName, bundle.DstFileHeader, bundle.DstFileColumns,
+			bundle.DstAccountToken, bundle.FileExtension, bundle.FileBucket,
 		)
 		if err != nil {
 			return bundle, err
@@ -334,12 +317,11 @@ func New() (*DBBundle, error) {
 		}
 	case "file":
 		bundle.dstFileDriver, err = file.New(
-			bundle.FileDataDir, bundle.DstFileBucket,
-			bundle.IDName, bundle.DateTemplate, bundle.TimeTemplate,
-			bundle.DstFileJSON, bundle.DstFileCompression, bundle.DstFileTopics,
-			bundle.DstFileExtension, bundle.DstFileMatch, bundle.DstFileExclude,
-			bundle.DstFileSpec, bundle.DstFilePath, bundle.DstFileName,
-			bundle.DstFileHeader, bundle.DstFileColumns,
+			renderMap, bundle.Include, bundle.Exclude, bundle.Columns, bundle.Extras,
+			bundle.CursorSpec, bundle.IDName, bundle.ATName, bundle.FileDataDir,
+			bundle.FileJSON, bundle.FileCompression, bundle.FileExtension,
+			bundle.FileBucket, bundle.FileTopics, bundle.FileMatch,
+			bundle.FilePath, bundle.FileName, bundle.FileHeader,
 		)
 		if err != nil {
 			return bundle, err
@@ -351,11 +333,12 @@ func New() (*DBBundle, error) {
 
 // Run implements interface that starts synchronization of the db items
 func (dbb *DBBundle) Run() error {
-	if dbb.srcFileDriver == nil && dbb.srcSQLDriver == nil && dbb.srcDocumentDriver == nil {
+	if dbb.srcFileDriver == nil && dbb.srcSQLDriver == nil {
 		// nothing to convert
 		return ErrNothingToSyncSource
 	}
-	if dbb.dstFileDriver == nil && dbb.dstSQLDriver == nil && dbb.dstDocumentDriver == nil {
+	if dbb.dstFileDriver == nil && dbb.dstSQLDriver == nil &&
+		dbb.dstDocumentDriver == nil && dbb.dstStorageDriver == nil {
 		// nothing to convert
 		return ErrNothingToSyncDestination
 	}
@@ -367,23 +350,32 @@ func (dbb *DBBundle) Run() error {
 		// unsupported (File to Document)
 		return ErrUnsupportedFileToDocument
 	}
-	if dbb.srcDocumentDriver != nil && dbb.dstSQLDriver != nil {
-		// unsupported (Document to SQL)
-		return ErrUnsupportedDocumentToSQL
-	}
-	if dbb.srcDocumentDriver != nil && dbb.dstFileDriver != nil {
-		// unsupported (Document to File)
-		return ErrUnsupportedDocumentToFile
-	}
-	if dbb.srcDocumentDriver != nil && dbb.dstDocumentDriver != nil {
-		// unsupported (Document to Document)
-		return ErrUnsupportedDocumentToDocument
+	if dbb.srcSQLDriver != nil && dbb.dstStorageDriver != nil {
+		// unsupported (SQL to Storage)
+		return ErrUnsupportedSQLToStorage
 	}
 	if dbb.srcFileDriver != nil {
+		for _, topic := range dbb.FileTopics {
+			if !dbb.exists(topic) {
+				dbb.status = append(dbb.status, Status{Table: topic})
+			}
+		}
 		if dbb.dstFileDriver != nil {
 			dbb.direction = file2file
+		} else {
+			dbb.direction = file2storage
 		}
 	} else {
+		for _, table := range dbb.UpdateDocuments {
+			if !dbb.exists(table) {
+				dbb.status = append(dbb.status, Status{Table: table})
+			}
+		}
+		for _, table := range dbb.InsertDocuments {
+			if !dbb.exists(table) {
+				dbb.status = append(dbb.status, Status{Table: table})
+			}
+		}
 		if dbb.dstFileDriver != nil {
 			dbb.direction = sql2file
 		} else {
@@ -396,11 +388,14 @@ func (dbb *DBBundle) Run() error {
 	}
 	go func() {
 		// usecases:
-		// 1. File to File/B2/S3
-		// 2. SQL to Document
-		// 3. SQL to File/B2/S3
-		// 4. SQL to SQL
+		// 1. File to Storage
+		// 2. File to File
+		// 3. SQL to File
+		// 4. SQL to Document
+		// 5. SQL to SQL
 		switch dbb.direction {
+		case file2storage:
+			fallthrough
 		case file2file:
 			dbb.syncFileToFileHandler()
 		case sql2file:
@@ -425,6 +420,8 @@ func (dbb *DBBundle) Run() error {
 		go func() {
 			for range insertTicker.C {
 				switch dbb.direction {
+				case file2storage:
+					fallthrough
 				case file2file:
 					dbb.syncFileToFileHandler()
 				case sql2file:
@@ -460,6 +457,18 @@ func (dbb *DBBundle) Shutdown() error {
 	dbb.wg.Wait()
 	if dbb.dstFileDriver != nil {
 		err := dbb.dstFileDriver.Close()
+		if err != nil {
+			return err
+		}
+	}
+	if dbb.dstStorageDriver != nil {
+		err := dbb.dstStorageDriver.Close()
+		if err != nil {
+			return err
+		}
+	}
+	if dbb.dstDocumentDriver != nil {
+		err := dbb.dstDocumentDriver.Close()
 		if err != nil {
 			return err
 		}
@@ -702,25 +711,15 @@ func (dbb *DBBundle) fetchSQLHandler() {
 	dbb.wg.Add(1)
 	defer dbb.wg.Done()
 	for _, table := range dbb.InsertDocuments {
-		dbb.mutex.Lock()
-		for key, status := range dbb.status {
-			if status.Table == table {
-				dbb.status[key].Changed = time.Now()
-				dbb.status[key].Running = true
-			}
-		}
-		dbb.mutex.Unlock()
 
 		var errors, srcID, dstID uint64
 		var err error
+		var rows *sql.Rows
 		dstTableName := dbb.DocumentsPrefix + table + dbb.DocumentsSuffix
 		srcID, err = dbb.srcSQLDriver.LastID(table)
 		if err != nil {
 			dbb.errlog.Println("LastID - Table:", table, err)
 			errors++
-		}
-		if dbb.StopBeforeID != 0 && srcID > dbb.StopBeforeID {
-			srcID = dbb.StopBeforeID
 		}
 		switch dbb.direction {
 		case sql2file:
@@ -734,40 +733,75 @@ func (dbb *DBBundle) fetchSQLHandler() {
 			dbb.errlog.Println("LastID - Table:", dstTableName, err)
 			errors++
 		}
+		if dstID != 0 && dbb.Reverse && dstID <= dbb.StartAfterID+1 {
+			break
+		}
+		if dbb.StopBeforeID != 0 {
+			if dstID >= dbb.StopBeforeID-1 {
+				break
+			}
+			if srcID > dbb.StopBeforeID {
+				srcID = dbb.StopBeforeID
+			}
+		}
 		if dstID < dbb.StartAfterID {
 			dstID = dbb.StartAfterID
+		}
+		if dstID >= srcID {
+			break
 		}
 		dbb.mutex.Lock()
 		for key, status := range dbb.status {
 			if status.Table == table {
+				dbb.status[key].Changed = time.Now()
+				dbb.status[key].Running = true
 				dbb.status[key].LastID = dstID
 			}
 		}
 		dbb.mutex.Unlock()
-		if dstID < srcID {
-			for {
-				rows, err := dbb.srcSQLDriver.GetLimitedAfterID(table, dstID, dbb.InsertRecords)
+		for {
+			if dbb.Reverse {
+				rows, err = dbb.srcSQLDriver.GetLimitedBeforeID(table, srcID, dbb.InsertRecords)
+			} else {
+				rows, err = dbb.srcSQLDriver.GetLimitedAfterID(table, dstID, dbb.InsertRecords)
+			}
+			if err != nil {
+				dbb.errlog.Println("GetLimited - Table:", table, err)
+				errors++
+			} else {
+				columns, err := rows.Columns()
 				if err != nil {
-					dbb.errlog.Println("GetLimitedAfterID - Table:", table, err)
+					dbb.errlog.Println("Columns - Table:", table, err)
 					errors++
-				} else {
-					columns, err := rows.Columns()
+				}
+				data := make([]interface{}, len(columns))
+				ptrs := make([]interface{}, len(columns))
+				for index := range columns {
+					ptrs[index] = &data[index]
+				}
+				for rows.Next() {
+					err := rows.Scan(ptrs...)
 					if err != nil {
-						dbb.errlog.Println("Columns - Table:", table, err)
+						dbb.errlog.Println(err)
 						errors++
-					}
-					data := make([]interface{}, len(columns))
-					ptrs := make([]interface{}, len(columns))
-					for index := range columns {
-						ptrs[index] = &data[index]
-					}
-					for rows.Next() {
-						err := rows.Scan(ptrs...)
-						if err != nil {
-							dbb.errlog.Println(err)
-							errors++
+					} else {
+						var last uint64
+						renderMap := &mapping.RenderMap{
+							DateTemplate: dbb.DateTemplate,
+							DateFormat:   dbb.DateFormat,
+							TimeTemplate: dbb.TimeTemplate,
+							TimeFormat:   dbb.TimeFormat,
+						}
+
+						skipped := mapping.Skipped(renderMap, dbb.Include, dbb.Exclude, columns, data)
+						if skipped {
+							switch dbb.direction {
+							case sql2file:
+								last, err = dbb.dstFileDriver.Cursor(dstTableName, renderMap, columns, data)
+							case sql2doc:
+								last, err = dbb.dstDocumentDriver.Cursor(dstTableName, renderMap, columns, data)
+							}
 						} else {
-							var last uint64
 							switch dbb.direction {
 							case sql2file:
 								last, err = dbb.dstFileDriver.AddFromSQL(dstTableName, columns, data)
@@ -776,46 +810,70 @@ func (dbb *DBBundle) fetchSQLHandler() {
 							case sql2sql:
 								last, err = dbb.dstSQLDriver.Insert(dstTableName, columns, data)
 							}
-							if err != nil {
-								dbb.errlog.Println("Insert - Table:", dstTableName, err)
-								errors++
-							} else {
-								dbb.mutex.Lock()
-								for key, status := range dbb.status {
-									if status.Table == table {
+						}
+						if err != nil {
+							dbb.errlog.Println("Insert - Table:", dstTableName, err)
+							errors++
+						} else {
+							dbb.mutex.Lock()
+							for key, status := range dbb.status {
+								if status.Table == table {
+									dbb.status[key].LastID = last
+									if !skipped {
 										dbb.status[key].Inserted++
-										dbb.status[key].LastID = last
-										dstID = last
 									}
 								}
-								dbb.mutex.Unlock()
+							}
+							dbb.mutex.Unlock()
+							if dbb.Reverse {
+								srcID = last
+							} else {
+								dstID = last
 							}
 						}
 					}
-					err = rows.Err()
-					if err != nil {
-						dbb.errlog.Println("Rows - Table:", table, err)
-						errors++
-					}
-					err = rows.Close()
-					if err != nil {
-						dbb.errlog.Println("Close - Table:", table, err)
-						errors++
-					}
-					if dbb.direction == sql2file {
-						err = dbb.dstFileDriver.Close()
-						if err != nil {
-							dbb.errlog.Println("Close files:", table, err)
-							errors++
+					if (dbb.Reverse || dbb.StopBeforeID != 0) && dstID+1 >= srcID {
+						break
+					} else {
+						if dstID >= srcID {
+							break
 						}
 					}
 				}
-				select {
-				case <-dbb.done:
-					dbb.stdlog.Println("SQL fetching gracefully done")
-					return
-				default:
+				err = rows.Err()
+				if err != nil {
+					dbb.errlog.Println("Rows - Table:", table, err)
+					errors++
 				}
+				err = rows.Close()
+				if err != nil {
+					dbb.errlog.Println("Close - Table:", table, err)
+					errors++
+				}
+				switch dbb.direction {
+				case sql2file:
+					err = dbb.dstFileDriver.Close()
+					if err != nil {
+						dbb.errlog.Println("Close files:", table, err)
+						errors++
+					}
+				case sql2doc:
+					err = dbb.dstDocumentDriver.Close()
+					if err != nil {
+						dbb.errlog.Println("Flush indices:", table, err)
+						errors++
+					}
+				}
+			}
+			select {
+			case <-dbb.done:
+				dbb.stdlog.Println("SQL fetching gracefully done")
+				return
+			default:
+			}
+			if (dbb.Reverse || dbb.StopBeforeID != 0) && dstID+1 >= srcID {
+				break
+			} else {
 				if dstID >= srcID {
 					break
 				}
@@ -837,8 +895,8 @@ func (dbb *DBBundle) syncFileToFileHandler() {
 	dbb.wg.Add(1)
 	defer dbb.wg.Done()
 	// scan specified directories (topics)
-	root := dbb.FileDataDir + string(os.PathSeparator) + dbb.SrcFileBucket + string(os.PathSeparator)
-	for _, topic := range dbb.SrcFileTopics {
+	root := dbb.FileDataDir + string(os.PathSeparator) + dbb.FileBucket + string(os.PathSeparator)
+	for _, topic := range dbb.FileTopics {
 		dbb.mutex.Lock()
 		for key, status := range dbb.status {
 			if status.Table == topic {
@@ -869,7 +927,14 @@ func (dbb *DBBundle) syncFileToFileHandler() {
 			default:
 			}
 			dbb.stdlog.Println("Syncing of", name)
-			err := dbb.dstFileDriver.PutFile(name, stream)
+			switch dbb.direction {
+			case file2file:
+				err = dbb.dstFileDriver.PutFile(name, stream)
+			case file2storage:
+				err = dbb.dstStorageDriver.PutFile(name, stream)
+			default:
+				err = ErrUnsupported
+			}
 			if err != nil {
 				dbb.errlog.Println(err)
 				errors++
@@ -883,7 +948,7 @@ func (dbb *DBBundle) syncFileToFileHandler() {
 				dbb.mutex.Unlock()
 			}
 			delete(files, name)
-			if dbb.SrcFileRemove && err == nil {
+			if dbb.FileRemove && err == nil {
 				err := dbb.srcFileDriver.Remove(stream.Handle.Name())
 				if err != nil {
 					dbb.errlog.Println(err)
