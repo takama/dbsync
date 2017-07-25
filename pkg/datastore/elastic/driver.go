@@ -14,13 +14,14 @@ import (
 // Elastic driver
 type Elastic struct {
 	ctx context.Context
-	*es.Client
+	*es.BulkProcessor
 
 	renderMap *mapping.RenderMap
 
 	include mapping.Fields
 	exclude mapping.Fields
 	columns mapping.Fields
+	extras  mapping.Fields
 	spec    mapping.Fields
 	indices mapping.Fields
 	cursors map[string]*mapping.Cursor
@@ -38,7 +39,7 @@ var ErrEmptyID = errors.New("Invalid ID data")
 // New creates Elastic driver
 func New(
 	host string, port uint64, renderMap *mapping.RenderMap,
-	include, exclude, columns, spec, indices mapping.Fields,
+	include, exclude, columns, extras, spec, indices mapping.Fields,
 ) (db *Elastic, err error) {
 	db = &Elastic{
 		ctx: context.Background(),
@@ -48,11 +49,17 @@ func New(
 		include: include,
 		exclude: exclude,
 		columns: columns,
+		extras:  extras,
+
 		spec:    spec,
 		indices: indices,
 		cursors: make(map[string]*mapping.Cursor),
 	}
-	db.Client, err = es.NewClient(es.SetURL(fmt.Sprintf("http://%s:%d", host, port)))
+	client, err := es.NewClient(es.SetURL(fmt.Sprintf("http://%s:%d", host, port)))
+	if err != nil {
+		return
+	}
+	db.BulkProcessor, err = client.BulkProcessor().Name("migration").Workers(2).Do(db.ctx)
 	return
 }
 
@@ -104,40 +111,21 @@ func (db *Elastic) AddFromSQL(document string, columns []string, values []interf
 	// Check index
 	for _, field := range db.indices {
 		index := db.renderMap.Render(field, columns, values)
-		exist, err := db.IndexExists(index).Do(db.ctx)
-		if err != nil {
-			return last, err
-		}
-		// Create index and mapping if they are not exist
-		if !exist {
-			createIndex, err := db.CreateIndex(index).Do(db.ctx)
-			if err != nil {
-				return last, err
-			}
-			if !createIndex.Acknowledged {
-				return last, ErrNotAcknowledged
-			}
-		}
 
 		// Write data
 		if len(db.columns) > 0 {
 			data := "{"
+			jsonMap.Extras = false
 			for _, field := range db.columns {
 				data = data + jsonMap.Render(field, columns, values)
 			}
+			jsonMap.Extras = true
+			for _, field := range db.extras {
+				data = data + jsonMap.Render(field, columns, values)
+			}
 			data = strings.Trim(data, ", ") + "}"
-			_, err = db.Index().
-				Index(index).
-				Type(document).
-				BodyString(data).
-				Do(db.ctx)
-			if err != nil {
-				return last, err
-			}
-			_, err = db.Flush().Index(index).Do(db.ctx)
-			if err != nil {
-				return last, err
-			}
+			request := es.NewBulkIndexRequest().Index(index).Type(document).Doc(data)
+			db.Add(request)
 		}
 	}
 
@@ -146,7 +134,7 @@ func (db *Elastic) AddFromSQL(document string, columns []string, values []interf
 
 // Close flushes data
 func (db *Elastic) Close() (err error) {
-	return
+	return db.Flush()
 }
 
 func (db *Elastic) getCursor(document string) (cursor *mapping.Cursor) {
