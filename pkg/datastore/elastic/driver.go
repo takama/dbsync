@@ -18,12 +18,14 @@ type Elastic struct {
 
 	renderMap *mapping.RenderMap
 
-	include mapping.Fields
-	exclude mapping.Fields
 	columns mapping.Fields
 	extras  mapping.Fields
-	spec    mapping.Fields
+
 	indices mapping.Fields
+
+	spec    mapping.Fields
+	idName  string
+	atName  string
 	cursors map[string]*mapping.Cursor
 }
 
@@ -39,20 +41,21 @@ var ErrEmptyID = errors.New("Invalid ID data")
 // New creates Elastic driver
 func New(
 	host string, port uint64, renderMap *mapping.RenderMap,
-	include, exclude, columns, extras, spec, indices mapping.Fields,
+	columns, extras, indices, spec mapping.Fields, idName, atName string,
 ) (db *Elastic, err error) {
 	db = &Elastic{
 		ctx: context.Background(),
 
 		renderMap: renderMap,
 
-		include: include,
-		exclude: exclude,
 		columns: columns,
 		extras:  extras,
 
-		spec:    spec,
 		indices: indices,
+
+		spec:    spec,
+		idName:  idName,
+		atName:  atName,
 		cursors: make(map[string]*mapping.Cursor),
 	}
 	client, err := es.NewClient(es.SetURL(fmt.Sprintf("http://%s:%d", host, port)))
@@ -79,7 +82,7 @@ func (db *Elastic) Cursor(
 ) (last uint64, err error) {
 	// Get and decode cursor
 	cursor := db.getCursor(document)
-	cursor.Decode(db.spec, renderMap, columns, values)
+	cursor.Decode(db.spec, db.idName, db.atName, renderMap, columns, values)
 
 	// Save cursor
 	db.cursors[document] = cursor

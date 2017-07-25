@@ -23,17 +23,18 @@ type Cursor struct {
 
 // Decode updates pointers or markers from data
 func (c *Cursor) Decode(
-	specification Fields, renderMap *RenderMap, columns []string, values []interface{},
+	specification Fields, idName, atName string, renderMap *RenderMap,
+	columns []string, values []interface{},
 ) {
 	for _, cursor := range specification {
 		// Check cursor for ID field
-		if strings.ToLower(cursor.Topic) == "id" ||
-			(cursor.Topic == "" && strings.ToLower(cursor.Name) == "id") {
+		if strings.ToLower(cursor.Topic) == strings.ToLower(idName) ||
+			(cursor.Topic == "" && strings.ToLower(cursor.Name) == strings.ToLower(idName)) {
 			c.ID = renderMap.Render(cursor, columns, values)
 		}
 		// Check cursor for AT field
-		if strings.ToLower(cursor.Topic) == "at" ||
-			(cursor.Topic == "" && strings.ToLower(cursor.Name) == "at") {
+		if strings.ToLower(cursor.Topic) == strings.ToLower(atName) ||
+			(cursor.Topic == "" && strings.ToLower(cursor.Name) == strings.ToLower(atName)) {
 			c.AT = renderMap.Render(cursor, columns, values)
 		}
 	}

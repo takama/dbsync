@@ -20,9 +20,13 @@ import (
 type File struct {
 	renderMap *mapping.RenderMap
 
+	include mapping.Fields
 	exclude mapping.Fields
 	columns mapping.Fields
+	extras  mapping.Fields
 	spec    mapping.Fields
+	idName  string
+	atName  string
 	cursors map[string]*mapping.Cursor
 
 	dataDir string
@@ -40,11 +44,6 @@ type File struct {
 	flow map[string]binding.Stream
 }
 
-type idSpec struct {
-	ID uint64
-	AT string
-}
-
 // ErrUnsupported declares error for unsupported methods
 var ErrUnsupported = errors.New("Unsupported method for file syncing")
 
@@ -56,16 +55,20 @@ var ErrEmptyID = errors.New("Invalid ID data")
 
 // New creates file driver
 func New(
-	renderMap *mapping.RenderMap, exclude, columns, spec mapping.Fields,
-	dataDir string, json, compression bool, extension, bucket string,
+	renderMap *mapping.RenderMap, include, exclude, columns, extras, spec mapping.Fields,
+	idName, atName, dataDir string, json, compression bool, extension, bucket string,
 	topics []string, match string, path, name, header mapping.Fields,
 ) (db *File, err error) {
 	db = &File{
 		renderMap: renderMap,
 
+		include: include,
 		exclude: exclude,
 		columns: columns,
+		extras:  extras,
 		spec:    spec,
+		idName:  idName,
+		atName:  atName,
 		cursors: make(map[string]*mapping.Cursor),
 
 		dataDir: dataDir,
@@ -108,7 +111,7 @@ func (db *File) Cursor(
 	if err != nil {
 		return
 	}
-	cursor.Decode(db.spec, renderMap, columns, values)
+	cursor.Decode(db.spec, db.idName, db.atName, renderMap, columns, values)
 
 	// Save cursor
 	db.cursors[bucket] = cursor
@@ -185,6 +188,7 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 				jsonMap.Finalizer = ", "
 				jsonMap.UseNames = true
 				jsonMap.Quotas = true
+				jsonMap.Extras = false
 				data = data + "{"
 				for _, field := range db.columns {
 					if field.Topic != "" && field.Topic != topic {
@@ -192,19 +196,33 @@ func (db *File) AddFromSQL(bucket string, columns []string, values []interface{}
 					}
 					data = data + jsonMap.Render(field, columns, values)
 				}
+				jsonMap.Extras = true
+				for _, field := range db.extras {
+					data = data + jsonMap.Render(field, columns, values)
+				}
 				data = strings.Trim(data, ", ") + "}"
 			} else {
+				listMap.Extras = false
 				for _, field := range db.columns {
 					if field.Topic != "" && field.Topic != topic {
 						continue
 					}
 					data = data + listMap.Render(field, columns, values)
 				}
+				listMap.Extras = true
+				for _, field := range db.extras {
+					data = data + listMap.Render(field, columns, values)
+				}
 			}
 		} else {
+			listMap.Extras = false
 			data = data + listMap.Render(
 				mapping.Field{Type: "string", Format: "%s"}, columns, values,
 			)
+			listMap.Extras = true
+			for _, field := range db.extras {
+				data = data + listMap.Render(field, columns, values)
+			}
 		}
 
 		// Save data
@@ -242,10 +260,10 @@ func (db *File) GetFiles(path string, fileCount int) (collection map[string]bind
 	var excludes []string
 	var errSkip = fmt.Errorf("Skip over files")
 	for _, f := range db.exclude {
-		if strings.ToLower(f.Name) == "id" {
+		if strings.ToLower(f.Name) == db.idName {
 			excludes = append(excludes, fmt.Sprintf(f.Format, cursor.ID))
 		}
-		if strings.ToLower(f.Name) == "at" {
+		if strings.ToLower(f.Name) == db.atName {
 			excludes = append(excludes, fmt.Sprintf(f.Format, cursor.AT))
 		}
 	}
