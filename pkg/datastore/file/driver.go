@@ -252,7 +252,7 @@ func (db *File) Close() (err error) {
 
 // GetFiles should collect
 func (db *File) GetFiles(path string, fileCount int) (collection map[string]binding.Stream, err error) {
-	cursor, err := db.getCursor(db.bucket)
+	cursor, err := db.readCursor(db.bucket)
 	if err != nil {
 		return
 	}
@@ -363,33 +363,10 @@ func (db *File) getCursor(bucket string) (cursor *mapping.Cursor, err error) {
 	if ok {
 		return
 	}
-	cursor = &mapping.Cursor{
-		ID: "0",
-		AT: "0000-00-00",
-	}
-	path := db.dataDir + string(os.PathSeparator) + db.bucketName(bucket)
-	_, err = os.Stat(path)
-	if os.IsNotExist(err) {
-		if err = os.Mkdir(path, os.ModeDir|0755); err != nil {
-			return
-		}
-	}
-	idPath := path + string(os.PathSeparator) + "cursor"
-	_, err = os.Stat(idPath)
-	// if file does not exist, return "0" without error
-	if os.IsNotExist(err) {
-		return cursor, nil
-	}
-	file, err := os.OpenFile(idPath, os.O_RDONLY, 0644)
+	cursor, err = db.readCursor(bucket)
 	if err != nil {
 		return
 	}
-	defer file.Close()
-	err = json.NewDecoder(bufio.NewReader(file)).Decode(cursor)
-	if err != nil {
-		return
-	}
-
 	db.cursors[bucket] = cursor
 	return
 }
@@ -444,6 +421,37 @@ func (db *File) save(bucket, path, data string) error {
 		}
 	}
 	return nil
+}
+
+func (db *File) readCursor(bucket string) (cursor *mapping.Cursor, err error) {
+	cursor = &mapping.Cursor{
+		ID: "0",
+		AT: "0000-00-00",
+	}
+	path := db.dataDir + string(os.PathSeparator) + db.bucketName(bucket)
+	_, err = os.Stat(path)
+	if os.IsNotExist(err) {
+		if err = os.Mkdir(path, os.ModeDir|0755); err != nil {
+			return
+		}
+	}
+	idPath := path + string(os.PathSeparator) + "cursor"
+	_, err = os.Stat(idPath)
+	// if file does not exist, return "0" without error
+	if os.IsNotExist(err) {
+		return cursor, nil
+	}
+	file, err := os.OpenFile(idPath, os.O_RDONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	err = json.NewDecoder(bufio.NewReader(file)).Decode(cursor)
+	if err != nil {
+		return
+	}
+
+	return
 }
 
 func (db *File) saveCursor(bucket string) error {
